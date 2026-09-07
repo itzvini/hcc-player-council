@@ -1287,18 +1287,50 @@ function listingForToken(tokenId) {
     || (linkListing && String(linkListing.tokenId) === String(tokenId) ? linkListing : null);
 }
 
-// Mirror the open modal into the address bar (/trade?coll=…&token=…) so every token
-// view is a shareable deep link. replaceState only — modals must not stack history.
+// --- The marketplace's addresses ---------------------------------------------------------
+// Every view here is a place, so every view is a URL: /trade/sell, /trade/sales and the rest,
+// alongside the two money views that already owned paths. That makes each one linkable,
+// bookmarkable, reachable with the Back button, and — because the server stamps a head per
+// path and lists them in the sitemap — findable from outside the site.
+//
+// What's a path and what's a query is the split between "which screen" and "what it's showing
+// right now": the tab is the path, the collection and the open token are parameters, because
+// they mean the same thing on every tab.
+const TRADE_TAB_PATHS = new Set(['buy', 'sell', 'transfer', 'sales', 'history']);
+
+/** The path for a view. Buy is the marketplace's front door, so it answers at bare /trade. */
+function tradePath(tab = tradeTab) {
+  if (FUNDS_VIEWS.has(tab)) return `/trade/${tab}`;
+  return TRADE_TAB_PATHS.has(tab) && tab !== 'buy' ? `/trade/${tab}` : '/trade';
+}
+
+/**
+ * The whole address for the current view. One writer, so a tab click, a collection switch and
+ * a token opening can't each invent their own version of it — which is how the money views'
+ * path used to get overwritten by a bare '/trade'.
+ *
+ * A filter deep link (?t=Type:Value from the trait showcase) is carried through rather than
+ * rebuilt: the filters are the reason that link was shared, and dropping them on the first
+ * repaint would quietly undo it.
+ */
+function tradeUrl(tab = tradeTab) {
+  const keep = new URLSearchParams(location.search);
+  const p = new URLSearchParams();
+  for (const v of keep.getAll('t')) p.append('t', v);
+  if (keep.get('scope') === 'all') p.set('scope', 'all');
+  if (coll !== 'creatures') p.set('coll', coll);
+  if (modalToken) p.set('token', modalToken);
+  const qs = p.toString();
+  return tradePath(tab) + (qs ? `?${qs}` : '');
+}
+
+// Mirror the current view into the address bar. replaceState: opening a token, switching
+// collection and repainting are all the same place seen differently, and none of them should
+// cost a press of the Back button. Changing TAB does push — see openTradeTab.
 function syncTradeUrl() {
   if (!location.pathname.startsWith('/trade')) return;
-  // A money view owns its own path, and '/trade/cash-out'.startsWith('/trade') is true — so
-  // without this guard the first collection switch or token open silently rewrote the URL
-  // back to a bare '/trade' and the route evaporated under the member.
-  if (onFundsView()) return;
-  const url = modalToken
-    ? `/trade?coll=${coll}&token=${encodeURIComponent(modalToken)}`
-    : '/trade';
-  history.replaceState(null, '', url);
+  const url = tradeUrl();
+  if (location.pathname + location.search !== url) history.replaceState(null, '', url);
 }
 
 // A slime's full detail (traits, rank, art) already rides in its browse row — the LAND
@@ -4213,12 +4245,16 @@ function traitSearchHits(q) {
     }
   }
   // A hit on the value itself beats a hit on the slot name; an earlier match beats a later
-  // one ("Bat" should lead with "Bat Nose", not "Big Pierced Bat Ears"); then the values
-  // with the most matches, then alphabetically so the order never wobbles.
+  // one ("Bat" should lead with "Bat Nose", not "Big Pierced Bat Ears"); then alphabetical,
+  // which is how the dropdowns order their values too.
+  //
+  // Deliberately NOT ranked by match count. Those counts are live — picking one Hair value
+  // drops every other slot's count — so ranking by them re-sorted the whole list under the
+  // cursor on every tick, and the second value you wanted had moved. The count still shows
+  // on each row; it just doesn't decide where the row sits.
   hits.sort((a, b) =>
     (a.at < 0) - (b.at < 0)
     || (a.at < 0 ? 0 : a.at - b.at)
-    || (b.n || 0) - (a.n || 0)
     || String(a.v).localeCompare(String(b.v)));
   return hits;
 }
@@ -4455,6 +4491,31 @@ function keepFacetPopStill(container, wasOpenType, nowOpenType) {
 }
 const openFacetInDom = r => r?.querySelector('.trade-flt-dd.is-open .trade-flt-ddbtn')?.dataset.type || null;
 
+// Where each scrollable trait list was left. The rebuild above re-creates them, which put a
+// member who had scrolled to the fortieth Eyes value back at the top of the list — and they
+// had to scroll there again to pick the second one. It's the same list either side of the
+// rebuild; only the counts moved.
+const FACET_SCROLLERS = '.trade-flt-pop, .trade-flt-hits';
+// Keyed by what the list is showing, not by its position among siblings: only the open facet
+// renders a popover, so the key survives a rebuild that reorders everything around it.
+const facetScrollKey = el => (el.classList.contains('trade-flt-hits')
+  ? 'hits'
+  : `pop:${el.closest('.trade-flt-dd')?.querySelector('.trade-flt-ddbtn')?.dataset.type || ''}`);
+function readFacetScroll(container) {
+  const at = new Map();
+  for (const el of container?.querySelectorAll(FACET_SCROLLERS) || []) {
+    if (el.scrollTop) at.set(facetScrollKey(el), el.scrollTop);
+  }
+  return at;
+}
+function restoreFacetScroll(container, at) {
+  if (!at || !at.size) return;
+  for (const el of container?.querySelectorAll(FACET_SCROLLERS) || []) {
+    const top = at.get(facetScrollKey(el));
+    if (top) el.scrollTop = top;
+  }
+}
+
 function patchFilters() {
   const r = root();
   if (!r || !isBrowseView()) return;
@@ -4462,7 +4523,13 @@ function patchFilters() {
   const sc  = r.querySelector('#flt-scope');   if (sc)  sc.innerHTML = scopeSegHtml();
   const rar = r.querySelector('#flt-rar');     if (rar) rar.innerHTML = rarityChipsHtml();
   const tier = r.querySelector('#flt-tier');   if (tier) tier.innerHTML = tierChipsHtml();
-  const tr  = r.querySelector('#flt-traits');  if (tr)  { tr.innerHTML = traitDropsHtml(); keepFacetPopStill(tr, wasOpen, openFacet); }
+  const tr  = r.querySelector('#flt-traits');
+  if (tr) {
+    const scrolled = readFacetScroll(tr);
+    tr.innerHTML = traitDropsHtml();
+    keepFacetPopStill(tr, wasOpen, openFacet);
+    restoreFacetScroll(tr, scrolled);
+  }
   const act = r.querySelector('#flt-active');  if (act) act.innerHTML = activeChipsHtml();
   const wb  = r.querySelector('#trade-wallet-slot'); if (wb) wb.innerHTML = walletBannerHtml();
   const tog = r.querySelector('.trade-flt-toggle');
@@ -4688,7 +4755,13 @@ function patchInvFilter() {
   const wasOpen = openFacetInDom(r);
   invFacets = computeInvFacets();
   const rar = r.querySelector('#inv-rar');    if (rar) rar.innerHTML = invRarityChipsHtml();
-  const tr  = r.querySelector('#inv-traits'); if (tr)  { tr.innerHTML = invTraitDropsHtml(); keepFacetPopStill(tr, wasOpen, openFacet); }
+  const tr  = r.querySelector('#inv-traits');
+  if (tr) {
+    const scrolled = readFacetScroll(tr);
+    tr.innerHTML = invTraitDropsHtml();
+    keepFacetPopStill(tr, wasOpen, openFacet);
+    restoreFacetScroll(tr, scrolled);
+  }
   const act = r.querySelector('#inv-active'); if (act) act.innerHTML = invActiveChipsHtml();
   const tog = r.querySelector('.trade-flt-toggle');
   if (tog) tog.innerHTML = `${esc(t('trade.filter.toggle'))}${invFltCount() ? `<span class="trade-flt-badge">${invFltCount()}</span>` : ''}`;
@@ -5087,7 +5160,8 @@ function chartDatasets() {
     .map(p => ({ x: p.t, y: chartValue(p.e, p.u), id: p.id || null, label: p.n || null }))
     .filter(p => p.y != null && p.y > 0);
   const line = ser.buckets
-    .map(b => ({ x: b.t, y: chartValue(b.avgEth, b.avgUsd) }))
+    // `mid` is where that bucket's sales actually are; `t` is only where its window opens.
+    .map(b => ({ x: b.mid ?? b.t, y: chartValue(b.avgEth, b.avgUsd) }))
     .filter(p => p.y != null && p.y > 0);
   return [
     {
@@ -6106,17 +6180,34 @@ export function closeProfileView() {
 // was seamless; a view re-renders Browse from scratch, so the scroll has to be carried.
 let fundsReturnY = null;
 
-// The document title while a money view is up, and the one to put back afterwards. The
-// server stamps the shell's <title>, but client-side navigation writes it nowhere else.
-let titleBeforeFunds = null;
-function setFundsTitle(which) {
-  if (titleBeforeFunds == null) titleBeforeFunds = document.title;
-  const name = t(which === 'cash-out' ? 'trade.cashout.view.h' : 'trade.topup.view.h');
-  document.title = `${name} · HCC Marketplace`;
+// The club's name as the shell declares it — document.title can't stand in, because on a
+// stamped load it is already this view's own title. Same trick the codex pages use.
+const SITE_TITLE = document.querySelector('meta[property="og:site_name"]')?.content
+  || 'Highrise Creature Club';
+
+// What each view calls itself. These are the strings the server stamps into the shell's
+// <title> for the same paths, so a link opened cold and a tab reached by clicking read the
+// same — which is the point of giving them addresses at all.
+const TRADE_VIEW_TITLE = {
+  buy:        () => t('nav.marketplace'),  // Buy answers at bare /trade, which is the market
+  sell:       () => `${t('nav.marketplace')}: ${t('trade.tab.sell')}`,
+  transfer:   () => `${t('nav.marketplace')}: ${t('trade.tab.transfer')}`,
+  sales:      () => `${t('nav.marketplace')}: ${t('trade.tab.sales')}`,
+  history:    () => `${t('nav.marketplace')}: ${t('trade.tab.myhistory')}`,
+  'add-funds': () => t('trade.topup.view.h'),
+  'cash-out':  () => t('trade.cashout.view.h'),
+};
+
+// Name the browser tab after the view. Someone with three of these open should be able to
+// tell Sell from Sales history without clicking through to find out. The fallback is the
+// club's own name, read from the shell: document.title can't stand in for it, because on a
+// stamped load it is already this view's title.
+function syncTradeTitle(tab = tradeTab) {
+  const label = TRADE_VIEW_TITLE[tab]?.();
+  document.title = label ? `${label} · ${SITE_TITLE}` : SITE_TITLE;
 }
-function restoreTitle() {
-  if (titleBeforeFunds != null) { document.title = titleBeforeFunds; titleBeforeFunds = null; }
-}
+/** Left the marketplace for another part of the site — give the shell its own name back. */
+export function restoreTradeTitle() { document.title = SITE_TITLE; }
 
 /** Tear down whichever money view is up, without navigating. Returns false if it declined. */
 function leaveFundsState() {
@@ -6163,11 +6254,45 @@ function gotoCashoutGuide(id) {
  * intent skip the chooser. `opts.updateUrl === false` is for the router, which owns the
  * address bar itself and must not be fought over it.
  */
+/**
+ * Open one of the marketplace's tabs, and put its address in the bar. Shared by the tab
+ * strip, by an in-page link to /trade/sales, and by the router on a cold load or a Back —
+ * the router passes updateUrl:false because it is already standing on that URL.
+ *
+ * Leaving a money view or a profile is part of opening a tab, not a separate step: both own
+ * addresses of their own that must not survive the move.
+ */
+export function openTradeTab(tab, opts = {}) {
+  if (!TRADE_TAB_PATHS.has(tab)) return;
+  const already = tradeTab === tab;
+  if (tradeTab === 'profile') profileViewSlug = null;
+  if (onFundsView() && !leaveFundsState()) return; // mid-signature — the move waits
+  setTradeTab(tab);
+  setFltSheet(false);
+  openFacet = null; // browse + inventory share the popover state; don't carry it across
+  syncTradeTitle(tab);
+  // pushState, not replace: moving between tabs is navigation, and Back should walk it.
+  if (opts.updateUrl !== false) {
+    const url = tradeUrl(tab);
+    if (location.pathname + location.search !== url) history.pushState(null, '', url);
+  } else {
+    // The router is standing on this address, so it isn't ours to push — but it may not be
+    // finished either: a ?token= deep link opens its modal from inside loadMarketplace,
+    // which writes the URL before route() has said which view it belongs to. Reconciling
+    // here (replaceState) keeps /trade/sales?token=… from collapsing to /trade?token=….
+    syncTradeUrl();
+  }
+  if (!loadedOnce || !root()) return; // the panel paints itself on boot with this tab already set
+  if (!already || opts.force) render();
+  if (tab === 'sell' || tab === 'transfer') maybeLoadSeller();
+  if (tab === 'history') maybeLoadHistory();
+}
+
 export function openFundsView(which, opts = {}) {
   if (!FUNDS_VIEWS.has(which)) return;
   // A money screen is the sort of thing people open in a second tab and come back to. With
   // every tab reading "Marketplace" they cannot find it again.
-  setFundsTitle(which);
+  syncTradeTitle(which);
   if (!onFundsView()) fundsReturnY = Math.round(window.scrollY || 0);
   setTradeTab(which);
   setFltSheet(false); openFacet = null; // no filter sheet hanging over a money screen
@@ -6187,9 +6312,9 @@ export function openFundsView(which, opts = {}) {
 export function closeFundsView({ updateUrl = true } = {}) {
   if (!onFundsView()) return;
   if (!leaveFundsState()) return; // a signature is outstanding — stay put
-  restoreTitle();
   setTradeTab('buy');
-  if (updateUrl && location.pathname.startsWith('/trade/')) history.pushState(null, '', '/trade');
+  syncTradeTitle('buy');
+  if (updateUrl && location.pathname.startsWith('/trade/')) history.pushState(null, '', tradeUrl('buy'));
   if (root()) render();
   if (fundsReturnY != null) {
     const y = fundsReturnY; fundsReturnY = null;
@@ -6201,11 +6326,23 @@ export function closeFundsView({ updateUrl = true } = {}) {
  * Called by app.js when the Marketplace nav tab is re-selected, and on a popstate back to
  * /trade. The URL is the caller's business there, so this only drops the view.
  */
+/**
+ * The Marketplace nav tab was clicked while a sub-view was up. That click means the front
+ * door, so whatever was on screen — a money view, a profile, Sales history — gives way to
+ * Buy. selectTab owns the URL for a nav click, so this one doesn't write it.
+ */
+export function exitTradeSubView() {
+  if (!loadedOnce) return;
+  if (onFundsView()) return; // exitFundsView already handled it (or declined, mid-signature)
+  if (tradeTab === 'buy') return;
+  openTradeTab('buy', { updateUrl: false });
+}
+
 export function exitFundsView() {
   if (!loadedOnce || !onFundsView()) return;
   if (!leaveFundsState()) return;
-  restoreTitle();
   setTradeTab('buy');
+  syncTradeTitle('buy');
   if (root()) render();
 }
 
@@ -7664,25 +7801,7 @@ function onClick(e) {
     case 'buy':        return handleBuy(target.dataset.listing);
     case 'trade-tab':
       if (tradeTab === target.dataset.tab) return;
-      // Leaving the profile view: its URL is /profile/{slug} — step back to /trade so
-      // the address bar matches the browse content again.
-      if (tradeTab === 'profile') {
-        profileViewSlug = null;
-        if (location.pathname.startsWith('/profile')) history.pushState(null, '', '/trade');
-      }
-      // Same for a money view, plus the teardown: without it a debounced quote fires after
-      // the member has navigated away and burns a slot in the canonical quote's 6/min budget.
-      if (onFundsView()) {
-        if (!leaveFundsState()) return; // mid-signature — the tab click waits
-        if (location.pathname.startsWith('/trade/')) history.pushState(null, '', '/trade');
-      }
-      setTradeTab(target.dataset.tab);
-      setFltSheet(false);
-      openFacet = null; // browse + inventory share the popover state; don't carry it across
-      render();
-      if (tradeTab === 'sell' || tradeTab === 'transfer') maybeLoadSeller();
-      if (tradeTab === 'history') maybeLoadHistory();
-      return;
+      return openTradeTab(target.dataset.tab);
     case 'coll': {
       if (coll === target.dataset.coll || !COLLECTIONS[target.dataset.coll]) return;
       // Both money views mean something different per collection: Add funds brings ETH onto
@@ -7694,6 +7813,7 @@ function onClick(e) {
       const reenterFunds = onFundsView() ? tradeTab : null;
       if (reenterFunds && !leaveFundsState()) return; // mid-signature — the switch waits
       setColl(target.dataset.coll);
+      syncTradeUrl(); // ?coll=land belongs in the address: the LAND market is a linkable thing
       if (reenterFunds === 'cash-out') enterCashOut({ step: 'intent' });
       else if (reenterFunds === 'add-funds') enterAddFunds({ step: 'intent' });
       try { localStorage.setItem('hcc-trade-coll', coll); } catch { /* fine */ }

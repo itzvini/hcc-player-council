@@ -3115,12 +3115,17 @@ function buildSalesSeries(pts) {
   for (const p of pts) {
     const k = bucket.ms ? Math.floor(p.t / bucket.ms) * bucket.ms : monthStart(p.t);
     let a = acc.get(k);
-    if (!a) acc.set(k, a = { t: k, n: 0, sumEth: 0, sumUsd: 0, usdN: 0, lo: Infinity, hi: -Infinity });
-    a.n++; a.sumEth += p.eth; a.lo = Math.min(a.lo, p.eth); a.hi = Math.max(a.hi, p.eth);
+    if (!a) acc.set(k, a = { t: k, n: 0, sumT: 0, sumEth: 0, sumUsd: 0, usdN: 0, lo: Infinity, hi: -Infinity });
+    a.n++; a.sumT += p.t; a.sumEth += p.eth; a.lo = Math.min(a.lo, p.eth); a.hi = Math.max(a.hi, p.eth);
     if (p.usd != null) { a.sumUsd += p.usd; a.usdN++; }
   }
   const buckets = [...acc.values()].sort((a, b) => a.t - b.t).map(a => ({
     t: a.t, n: a.n,
+    // Where the line's point goes: the average MOMENT of the sales in this bucket, not the
+    // bucket's own start. Stamped at the start, a monthly bucket holding one sale on the 30th
+    // drew its point on the 1st — so the trend line stopped a month short of the last dot at
+    // one end and was clipped off the axis at the other.
+    mid: Math.round(a.sumT / a.n),
     avgEth: round6(a.sumEth / a.n),
     avgUsd: a.usdN ? round2(a.sumUsd / a.usdN) : null,
     loEth: round6(a.lo), hiEth: round6(a.hi),
@@ -7887,6 +7892,9 @@ const CANONICAL_ALIAS = new Map([
   ['/apply', '/council/vote'],
   ['/holders', '/market/holders'],
   ['/guides/scams', '/guides/safety'],
+  // Buy is the marketplace's front door: /trade/buy is the same page under a name people
+  // guess. It has no card of its own, so it unfurls as /trade and points there.
+  ['/trade/buy', '/trade'],
 ]);
 
 // path -> card. `tk` and `dk` name an en.json key, read at request time so the card
@@ -8045,6 +8053,37 @@ const SECTION_CARDS = {
     tk: "nav.marketplace",
     d: "Buy, sell, make offers and transfer Creatures on Immutable zkEVM and LAND on Ethereum, priced in ETH or USDC. Your own wallet signs every trade and we charge no marketplace fee.",
   },
+  // Each view of the marketplace, so it can be linked to, found, and unfurled as the thing
+  // it actually is. `ttpl` keeps the tab's own translated name and says which marketplace
+  // it belongs to — "Sell" alone reads as a verb the club is aiming at you.
+  "/trade/sell": {
+    tk: "trade.tab.sell",
+    ttpl: "Marketplace: {k}",
+    d: "List what you own for whatever you decide it's worth, one at a time or in bulk. Creature listings cost nothing to create — just a signature — and we take no cut of the sale.",
+  },
+  "/trade/transfer": {
+    tk: "trade.tab.transfer",
+    ttpl: "Marketplace: {k}",
+    d: "Send Creatures, LAND or coins to another wallet. Pick as many as you like, check the address once, and sign the move yourself. No listing, no fee, no middleman.",
+  },
+  "/trade/sales": {
+    tk: "trade.tab.sales",
+    ttpl: "Marketplace: {k}",
+    d: "What Creatures and LAND have actually sold for, back to the Immutable X years, with a price chart over whatever you filter to. Search a trait and see what it really goes for.",
+  },
+  "/trade/history": {
+    tk: "trade.tab.myhistory",
+    ttpl: "Marketplace: {k}",
+    d: "Everything your wallet has done here: what you bought and sold, what you sent and received, and every listing you have open, cancelled or seen expire.",
+  },
+  "/trade/add-funds": {
+    tk: "trade.topup.view.h",
+    dk: "trade.topup.view.lead",
+  },
+  "/trade/cash-out": {
+    tk: "trade.cashout.view.h",
+    dk: "trade.cashout.view.lead",
+  },
   "/profile": {
     tk: "trade.profile.h",
     d: "Switch on a public page that shows what you hold, so a buyer can see who they are dealing with. It is opt-in, and switching it off deletes it.",
@@ -8074,6 +8113,35 @@ const SECTION_CARDS = {
   },
 };
 
+/* ------------------------------------------------------------ the page index
+
+   The header search has to find pages, and this table already knows every page the site
+   has: its path, and the en.json keys for its name and its summary. Serving it beats a
+   second hand-kept list — a page added for a share card is findable the same day — and
+   the keys travel unresolved so the client fills them from its own translations. Results
+   come out in the reader's language for free; only the handful of routes carrying literal
+   copy (`t`/`d`, for the ones no single key says well) stay English, as their cards do.
+
+   Two exclusions, the same ones the sitemap makes: a canonical alias is another name for
+   a route already listed, and a holder's profile is theirs to share, not ours to index. */
+function searchPageIndex() {
+  const pages = [];
+  for (const [route, card] of Object.entries(SECTION_CARDS)) {
+    if (route.startsWith('/profile') || CANONICAL_ALIAS.has(route)) continue;
+    pages.push({
+      // The club's page answers to both /club and /, and / is the one worth showing.
+      p: route === '/club' ? '/' : route,
+      s: route.split('/')[1] || 'club',
+      tk: card.tk || null,
+      t: card.t || null,
+      ttpl: card.ttpl || null,
+      dk: card.dk || null,
+      d: card.d || null,
+    });
+  }
+  return pages;
+}
+
 function cardCopy(entry) {
   const doc = getLocaleDoc();
   const pick = (key, literal) => {
@@ -8098,15 +8166,30 @@ function newestReleaseArt(origin) {
   return hero ? artUrlFor(origin, 'full', hero.k) : null;
 }
 
+/* The marketplace serves two collections, and ?coll=land is not a detail of one page — it
+   is the other market, with other assets, other prices and another chain under it. So a
+   LAND address gets its own head and its own line in the sitemap, rather than unfurling as
+   the Creature market it isn't. Only the description moves: the title still names the view,
+   because that is what the member clicked. */
+const LAND_CARD_D = {
+  "/trade": "Every LAND plot for sale, each with the Slime pet that comes with it. Browse by the Slime's traits and rarity rank; trades settle on Ethereum through OpenSea's order book, at no fee from us.",
+  "/trade/sell": "List a LAND plot you own. You set the price, it goes on OpenSea's order book where every LAND buyer can see it, and we take no cut.",
+  "/trade/sales": "What LAND plots have actually sold for, with a price chart over whatever you filter to. Compare by plot type and by the Slime that came with the parcel.",
+};
+function landCardFor(pathname, card) {
+  const d = LAND_CARD_D[pathname];
+  return d ? { ...card, dk: null, d } : card;
+}
+
 // The card for a path: itself, then the view it aliases, then its parent. The walk up is
 // what makes an unknown deep link (a renamed walkthrough step, a stale bookmark) unfurl
 // as the page it belongs to instead of as the front door.
 function findCard(pathname) {
   let p = pathname;
   for (let i = 0; i < 4 && p; i++) {
-    if (SECTION_CARDS[p]) return SECTION_CARDS[p];
+    if (SECTION_CARDS[p]) return { card: SECTION_CARDS[p], at: p };
     const alias = CARD_ALIAS.get(p);
-    if (alias && SECTION_CARDS[alias]) return SECTION_CARDS[alias];
+    if (alias && SECTION_CARDS[alias]) return { card: SECTION_CARDS[alias], at: alias };
     const cut = p.lastIndexOf('/');
     if (cut <= 0) break;
     p = p.slice(0, cut);
@@ -8114,22 +8197,32 @@ function findCard(pathname) {
   return null;
 }
 
-function sectionPageMeta(pathname, origin) {
+function sectionPageMeta(pathname, origin, search) {
   const p = pathname.replace(/\/+$/, '') || '/';
-  const card = findCard(p);
-  if (!card) return null;
+  const found = findCard(p);
+  if (!found) return null;
+  let card = found.card;
+  // The one query parameter that changes which page this is, rather than what it is showing.
+  const land = found.at.startsWith('/trade') && search?.get('coll') === 'land';
+  if (land) card = landCardFor(found.at, card);
   const { title, description } = cardCopy(card);
   if (!title && !description) return null;
+  // The canonical is the page the card actually describes. An address with no card of its
+  // own — a renamed step, /trade/typo, a dead entity slug — unfurls as the page it belongs
+  // to, and now points there too, instead of inviting a crawler to index a typo.
+  const canonical = CANONICAL_ALIAS.get(found.at) || found.at;
   return {
     title: !title || title === SITE_NAME ? SITE_NAME : `${title} · ${SITE_NAME}`,
     description: description || '',
     image: card.art === 'newestRelease' ? newestReleaseArt(origin)
       : card.img ? origin + card.img : null,
-    url: origin + (CANONICAL_ALIAS.get(p) || p),
+    // Self-referencing, land included: a shared LAND link should point at the LAND market,
+    // not fold into the Creature one.
+    url: origin + canonical + (land ? '?coll=land' : ''),
     // A fixed set of routes with a fixed stamp each, so the gzipped copy is worth keeping.
     // The origin is in the key because the stamp carries it: two hostnames serving the
     // same route are two different bodies, and without it they would evict each other.
-    cacheKey: `shell:${origin}:${CARD_ALIAS.get(p) || p}`,
+    cacheKey: `shell:${origin}:${canonical}${land ? '?coll=land' : ''}`,
   };
 }
 
@@ -8150,7 +8243,7 @@ async function profilePageMeta(slug, origin) {
   try { row = await db.getHolderProfileBySlug(slug); } catch { row = null; }
   // Disabling a profile deletes it, so dead links are normal. They unfurl as the feature
   // they point at, which is true, rather than as the site's front door, which is not.
-  if (!row) return sectionPageMeta(`/profile/${slug}`, origin);
+  if (!row) return sectionPageMeta(`/profile/${slug}`, origin, null);
   const name = String(row.display_name || '').slice(0, 40) || slug;
   const { title, description } = cardCopy(card);
   const fill = s => (s || '').split('{name}').join(name);
@@ -8242,6 +8335,10 @@ async function buildSitemap(origin) {
     if (route.startsWith('/profile') || CANONICAL_ALIAS.has(route)) continue;
     const loc = origin + (route === '/club' ? '/club' : route);
     if (!listed.has(loc)) out.push(urlEntry(loc, null));
+    // The LAND market has its own head at the same paths, so it gets its own lines here.
+    // Only the views that mean something for LAND — it has no coin transfers or own history
+    // page of its own to advertise.
+    if (LAND_CARD_D[route]) out.push(urlEntry(`${loc}?coll=land`, null));
   }
 
   // Every live announcement, with the date it was posted as its lastmod. If the database
@@ -8396,6 +8493,14 @@ const server = http.createServer((request, response) => {
       console.error('Collection art error:', err.message);
       if (!response.headersSent) sendJson(response, 500, { error: 'Something went wrong.' });
     });
+    return;
+  }
+
+  // The page half of the site search. Built from the share-card table, so it is static for
+  // the life of the process and costs nothing to serve.
+  if (request.url === '/api/search/pages') {
+    sendJson(response, 200, { pages: searchPageIndex() },
+      { 'Cache-Control': 'public, max-age=300' }, { request });
     return;
   }
 
@@ -8621,7 +8726,7 @@ const server = http.createServer((request, response) => {
   const codex = codexRouteOf(requested.pathname);
   const profile = codex ? null : profileRouteOf(requested.pathname);
   const announcement = codex || profile ? null : announcementRouteOf(requested.pathname);
-  const section = () => sectionPageMeta(requested.pathname, origin);
+  const section = () => sectionPageMeta(requested.pathname, origin, requested.searchParams);
   const pending = announcement ? announcementPageMeta(announcement, origin)
     : codex
     // A renamed release, a Creature number that never existed, a trait catalogue still

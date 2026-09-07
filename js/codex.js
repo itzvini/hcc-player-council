@@ -2,6 +2,9 @@ import { t } from './i18n.js';
 import { slug, codexHref } from './entity-url.js';
 import { TERM_GROUPS, TERMS } from './glossary.js';
 import { linkPhrasesInHtml } from './glossary-link.js';
+// The ranking and the row shape are the site search's, not the archive's: an item and a
+// page have to be sortable against each other in one list.
+import { searchScore, searchRow } from './search.js';
 import {
   collectionsData, TYPES, NOT_WORN, esc, num, fullDate, monthYear, dateLabel, catName,
   itemShot, fullShot, discordMarkup,
@@ -614,40 +617,20 @@ export function renderGlossary() {
 }
 
 /* --------------------------------------------------------------------- find
-   The front door. Every codex page is reachable by link, which is worth nothing if the
-   only way to find one is to already know where it lives. One box searches all four
-   kinds at once and every result is a page, not a filter: the two boxes inside the grids
-   narrow what you are already looking at, this one takes you somewhere.
+   The archive half of the site search. Every codex page is reachable by link, which is
+   worth nothing if the only way to find one is to already know where it lives.
 
-   Releases and items come out of the archive the timeline already holds, traits out of
-   the catalogue the trait pages already fetch, so a search costs no request of its own.
-   A Creature is searched by the number people actually say. */
+   Releases and items come out of the archive the timeline already holds and traits out of
+   the catalogue the trait pages already fetch, so a search costs no request of its own
+   once a page here has been opened. A Creature is searched by the number people actually
+   say.
+
+   The boxes, the ranking and the keyboard live in search.js, which merges these groups
+   with the site's pages. This file only knows how to find things in the archive. */
 
 const FIND_PER_GROUP = 6;
-let findBox = null;      // the input
-let findList = null;     // the results panel
-let findRows = [];       // what is currently listed, in order, for the arrow keys
-let findAt = -1;         // which row is highlighted
-let findSeq = 0;
 
-// Rank: something that starts with what you typed beats something that merely contains
-// it, and a shorter name beats a longer one. That puts "Zedd" above "Zedd Plushie" when
-// you type "zedd", which is what you meant.
-function findScore(name, q) {
-  const n = name.toLowerCase();
-  const at = n.indexOf(q);
-  if (at < 0) return null;
-  return (at === 0 ? 0 : 1000) + at + n.length / 100;
-}
-
-function findRow(href, label, meta, kind, art) {
-  return { href, label, meta, kind, art };
-}
-
-async function findResults(raw) {
-  const q = raw.trim().toLowerCase();
-  if (q.length < 2 && !/^\d+$/.test(q)) return null;
-
+export async function archiveResults(q) {
   const groups = [];
   // The trait catalogue is the one source a search may have to fetch. Failing to get it
   // narrows the results; it never costs the archive ones.
@@ -661,8 +644,8 @@ async function findResults(raw) {
   if (/^\d{1,5}$/.test(q) && doc && doc.total && Number(q) >= 1 && Number(q) <= doc.total) {
     groups.push({
       key: 'creature',
-      rows: [findRow(codexHref('creature', q), `Highrise Creature #${q}`,
-        t('cdx.find.creature'), 'creature', null)],
+      rows: [searchRow(codexHref('creature', q), `Highrise Creature #${q}`,
+        t('srch.creature'), 'creature', null)],
       total: 1,
     });
   }
@@ -672,14 +655,14 @@ async function findResults(raw) {
   const termHits = [];
   for (const slug of Object.keys(TERMS)) {
     const title = t(`term.${slug}.t`);
-    const score = findScore(title === `term.${slug}.t` ? slug : title, q);
+    const score = searchScore(title === `term.${slug}.t` ? slug : title, q);
     if (score != null) termHits.push({ score, slug });
   }
   termHits.sort((a, b) => a.score - b.score);
   if (termHits.length) groups.push({
     key: 'term',
     total: termHits.length,
-    rows: termHits.slice(0, FIND_PER_GROUP).map(({ slug: sl }) => findRow(
+    rows: termHits.slice(0, FIND_PER_GROUP).map(({ slug: sl }) => searchRow(
       codexHref('term', sl), t(`term.${sl}.t`), t(`cdx.g.${TERMS[sl].group}`), 'term', null)),
   });
 
@@ -687,7 +670,7 @@ async function findResults(raw) {
     const hits = [];
     for (const ty of doc.types) {
       for (const val of ty.values) {
-        const score = findScore(val.v, q);
+        const score = searchScore(val.v, q);
         if (score != null) hits.push({ score, ty, val });
       }
     }
@@ -695,7 +678,7 @@ async function findResults(raw) {
     if (hits.length) groups.push({
       key: 'trait',
       total: hits.length,
-      rows: hits.slice(0, FIND_PER_GROUP).map(({ ty, val }) => findRow(
+      rows: hits.slice(0, FIND_PER_GROUP).map(({ ty, val }) => searchRow(
         codexHref('trait', ty.type, val.v), val.v,
         `${slotName(ty.type, doc)} · ${tr('cdx.trait.wearers', { n: num(val.n) })}`,
         'trait',
@@ -707,10 +690,10 @@ async function findResults(raw) {
     const items = new Map();   // one row per name, first appearance, as the pages are
     const releases = [];
     for (const rel of archive.releases) {
-      const relScore = findScore(rel.name, q);
+      const relScore = searchScore(rel.name, q);
       if (relScore != null) releases.push({ score: relScore, rel });
       for (const it of rel.items) {
-        const score = findScore(it.n, q);
+        const score = searchScore(it.n, q);
         if (score == null) continue;
         const key = slug(it.n);
         if (!items.has(key)) items.set(key, { score, it, rel });
@@ -720,7 +703,7 @@ async function findResults(raw) {
     if (itemHits.length) groups.push({
       key: 'item',
       total: itemHits.length,
-      rows: itemHits.slice(0, FIND_PER_GROUP).map(({ it, rel }) => findRow(
+      rows: itemHits.slice(0, FIND_PER_GROUP).map(({ it, rel }) => searchRow(
         codexHref('item', it.n), it.n,
         `${catName(it.c)} · ${rel.name}`, 'item',
         it.k ? `/api/collections/art/thumb/${encodeURIComponent(it.k)}.webp` : null)),
@@ -730,7 +713,7 @@ async function findResults(raw) {
     if (releases.length) groups.push({
       key: 'release',
       total: releases.length,
-      rows: releases.slice(0, FIND_PER_GROUP).map(({ rel }) => findRow(
+      rows: releases.slice(0, FIND_PER_GROUP).map(({ rel }) => searchRow(
         codexHref('release', rel.id), rel.name,
         `${t(`col.type1.${rel.type}`)} · ${dated(rel)}`, 'release', null)),
     });
@@ -739,102 +722,6 @@ async function findResults(raw) {
   return groups;
 }
 
-function findRender(groups, q) {
-  if (!findList) return;
-  if (!groups) { findClose(); return; }
-  findRows = groups.flatMap(g => g.rows);
-  findAt = -1;
-  if (!findRows.length) {
-    findList.innerHTML = `<p class="cdx-find-none">${esc(tr('cdx.find.none', { q }))}</p>`;
-  } else {
-    findList.innerHTML = groups.map(g => `
-      <div class="cdx-find-group" role="group" aria-label="${esc(t(`cdx.find.g.${g.key}`))}">
-        <span class="cdx-find-g-h">${esc(t(`cdx.find.g.${g.key}`))}${
-          g.total > g.rows.length ? `<i>${esc(tr('cdx.find.more', { n: num(g.total - g.rows.length) }))}</i>` : ''}</span>
-        ${g.rows.map(r => `
-          <a class="cdx-find-row" role="option" aria-selected="false" href="${esc(r.href)}" id="cdx-find-${
-            findRows.indexOf(r)}">
-            <span class="cdx-find-shot${r.art ? '' : ' is-empty'}">${r.art
-              ? `<img src="${esc(r.art)}" alt="" loading="lazy" decoding="async">` : ''}</span>
-            <span class="cdx-find-t">
-              <span class="cdx-find-n">${esc(r.label)}</span>
-              <span class="cdx-find-m">${esc(r.meta)}</span>
-            </span>
-          </a>`).join('')}
-      </div>`).join('');
-  }
-  // Art that 404s (an item whose picture was never baked) leaves a broken-image glyph,
-  // which reads as a fault rather than an absence. CSP forbids an inline onerror, so the
-  // picture is dropped here and the empty frame stands in.
-  findList.querySelectorAll('.cdx-find-shot img').forEach(img =>
-    img.addEventListener('error', () => {
-      img.parentElement?.classList.add('is-empty');
-      img.remove();
-    }, { once: true }));
-  findList.hidden = false;
-  findBox.setAttribute('aria-expanded', 'true');
-}
-
-function findClose() {
-  if (!findList) return;
-  findList.hidden = true;
-  findList.innerHTML = '';
-  findRows = [];
-  findAt = -1;
-  findBox.setAttribute('aria-expanded', 'false');
-  findBox.removeAttribute('aria-activedescendant');
-}
-
-// Arrow keys walk the flattened list, so they cross group boundaries without the reader
-// having to know there were groups.
-function findMove(delta) {
-  if (!findRows.length) return;
-  findAt = (findAt + delta + findRows.length) % findRows.length;
-  const rows = findList.querySelectorAll('.cdx-find-row');
-  rows.forEach((el, i) => {
-    const on = i === findAt;
-    el.classList.toggle('is-on', on);
-    el.setAttribute('aria-selected', String(on));
-    if (on) {
-      el.scrollIntoView({ block: 'nearest' });
-      findBox.setAttribute('aria-activedescendant', el.id);
-    }
-  });
-}
-
-export function initCodexFind() {
-  if (findBox) return;
-  findBox = document.getElementById('cdx-find');
-  findList = document.getElementById('cdx-find-list');
-  if (!findBox || !findList) return;
-
-  let timer;
-  findBox.addEventListener('input', () => {
-    clearTimeout(timer);
-    const value = findBox.value;
-    timer = setTimeout(async () => {
-      const mine = ++findSeq;
-      const groups = await findResults(value);
-      if (mine === findSeq) findRender(groups, value.trim());
-    }, 140);
-  });
-
-  findBox.addEventListener('keydown', event => {
-    if (event.key === 'ArrowDown') { event.preventDefault(); findMove(1); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); findMove(-1); }
-    else if (event.key === 'Escape') { findClose(); findBox.blur(); }
-    else if (event.key === 'Enter' && findAt >= 0) {
-      event.preventDefault();
-      findList.querySelectorAll('.cdx-find-row')[findAt]?.click();
-    }
-  });
-
-  // Following a result leaves the box holding a query for a page you are now looking at.
-  findList.addEventListener('click', () => { findBox.value = ''; findClose(); });
-  document.addEventListener('click', event => {
-    if (!findList.hidden && !event.target.closest('.cdx-find')) findClose();
-  });
-}
 
 /* ---------------------------------------------------------------- the view */
 

@@ -129,8 +129,46 @@ body { margin: 0; opacity: 0; background: #141317; color: #CCCADC; animation: bo
         </div>
       </div>
     </div>
+
+    <!-- Search. The nav row has no space for an input, and a wiki's search wants to be
+         one keystroke away rather than one more pill, so this opens the palette below.
+         Ordered last on desktop and moved beside the burger on mobile. -->
+    <button class="nav-srch" type="button" id="nav-srch" aria-controls="srch-pal"
+      aria-expanded="false" aria-label="Search the site" data-i18n-aria="srch.a11y.open">
+      <span class="nav-srch-ico" aria-hidden="true"><svg class="srch-ico-svg" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="10.8" cy="10.8" r="6.8"/><path d="M15.8 15.8 21 21"/></svg></span>
+      <kbd class="nav-srch-key" aria-hidden="true">/</kbd>
+    </button>
   </div>
 </nav>
+
+<!-- The header search. One box over every page on the site and the whole archive, opened
+     from the nav, by "/" or by Ctrl/Cmd-K. js/search.js wires it and fills the list; the
+     dialog is markup rather than generated so its labels translate with everything else.
+     Every result is a link to a real address, never a filter. -->
+<div class="srch-pal" id="srch-pal" role="dialog" aria-modal="true"
+  aria-label="Search the site" data-i18n-aria="srch.a11y.dialog" hidden>
+  <div class="srch-pal-scrim" id="srch-pal-scrim"></div>
+  <div class="srch-pal-card">
+    <span class="srch-pal-glow" aria-hidden="true"></span>
+    <div class="srch srch-pal-field" role="search">
+      <label class="srch-lbl" for="srch-pal-in" data-i18n="srch.label">Search the site</label>
+      <span class="srch-ico" aria-hidden="true"><svg class="srch-ico-svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="10.8" cy="10.8" r="6.8"/><path d="M15.8 15.8 21 21"/></svg></span>
+      <input id="srch-pal-in" class="srch-in" type="search" autocomplete="off" role="combobox"
+        aria-expanded="false" aria-controls="srch-pal-list" aria-autocomplete="list"
+        placeholder="Pages, items, traits, Creatures"
+        data-i18n-placeholder="srch.ph">
+      <button class="srch-pal-x" type="button" id="srch-pal-x"
+        aria-label="Close search" data-i18n-aria="srch.a11y.close">&#215;</button>
+    </div>
+    <!-- Not absolutely positioned like the in-page box's list: inside the dialog it is
+         the card's own body, so the card grows with the results and shrinks back. -->
+    <div id="srch-pal-list" class="srch-list srch-pal-list" role="listbox"
+      aria-label="Search results" data-i18n-aria="srch.a11y.results"></div>
+    <p class="srch-pal-hint">
+      <span data-i18n="srch.hint.keys">Type a number to jump to that Creature. Arrow keys to move, Enter to open, Esc to close.</span>
+    </p>
+  </div>
+</div>
 
 <!-- Dims the page behind the mobile menu sheet so the sheet reads as a layer, not a
      floating box with content showing through it. Hidden on desktop, where the menu is
@@ -1377,18 +1415,20 @@ body { margin: 0; opacity: 0; background: #141317; color: #CCCADC; animation: bo
 <!-- Collections — the full release archive, oldest to newest. js/collections.js fills
      #collections-app from /collections.json; the loading spinner is the only static bit. -->
 <main id="panel-collections" class="tab-panel" role="region" aria-labelledby="tab-collections" hidden>
-  <!-- The codex front door. Sits above the sub-nav so it stays reachable from the
-       archive, the trait showcase and every entity page. js/codex.js fills the list. -->
-  <div class="wrap cdx-find-wrap">
-    <div class="cdx-find" role="search">
-      <label class="cdx-find-lbl" for="cdx-find" data-i18n="cdx.find.label">Search the archive</label>
-      <span class="cdx-find-ico" aria-hidden="true">&#128269;</span>
-      <input id="cdx-find" class="cdx-find-in" type="search" autocomplete="off" role="combobox"
-        aria-expanded="false" aria-controls="cdx-find-list" aria-autocomplete="list"
-        placeholder="Releases, items, traits, Creature numbers"
-        data-i18n-placeholder="cdx.find.ph">
-      <div id="cdx-find-list" class="cdx-find-list" role="listbox"
-        aria-label="Search results" data-i18n-aria="cdx.find.a11y.results" hidden></div>
+  <!-- The archive's own box, kept where it has always been: above the sub-nav, so it is
+       there on the archive, the trait showcase and every entity page, and visible the
+       whole time you browse. It runs the same matcher as the header search (js/search.js),
+       so the two never disagree about what a query finds. -->
+  <div class="wrap srch-wrap">
+    <div class="srch" role="search">
+      <label class="srch-lbl" for="col-srch" data-i18n="srch.label">Search the site</label>
+      <span class="srch-ico" aria-hidden="true"><svg class="srch-ico-svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="10.8" cy="10.8" r="6.8"/><path d="M15.8 15.8 21 21"/></svg></span>
+      <input id="col-srch" class="srch-in" type="search" autocomplete="off" role="combobox"
+        aria-expanded="false" aria-controls="col-srch-list" aria-autocomplete="list"
+        placeholder="Pages, items, traits, Creatures"
+        data-i18n-placeholder="srch.ph">
+      <div id="col-srch-list" class="srch-list" role="listbox"
+        aria-label="Search results" data-i18n-aria="srch.a11y.results" hidden></div>
     </div>
   </div>
 

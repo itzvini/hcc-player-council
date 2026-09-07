@@ -932,5 +932,21 @@
   "a11y.pet.purploofie": "Purploofie-Pet",
   "a11y.pet.oranchuplump": "Oranchuplump-Pet",
   "a11y.slimepet": "Slime-Pet",
-  "holders.asOf": "Daten vom {date}"
+  "holders.asOf": "Daten vom {date}",
+  "srch.label": "Website durchsuchen",
+  "srch.ph": "Seiten, Merkmale, Creatures",
+  "srch.a11y.results": "Suchergebnisse",
+  "srch.none": "Hier passt nichts zu „{q}“.",
+  "srch.more": "+{n} weitere",
+  "srch.creature": "Seite dazu öffnen",
+  "srch.g.creature": "Creature",
+  "srch.g.trait": "Merkmale",
+  "srch.g.item": "Items",
+  "srch.g.release": "Releases",
+  "srch.g.term": "Glossar",
+  "srch.g.page": "Seiten",
+  "srch.hint.keys": "Tippe eine Nummer, um direkt zu dieser Creature zu springen. Pfeiltasten zum Wechseln, Enter zum Öffnen, Esc zum Schließen.",
+  "srch.a11y.open": "Website durchsuchen",
+  "srch.a11y.close": "Suche schließen",
+  "srch.a11y.dialog": "Website durchsuchen"
 }

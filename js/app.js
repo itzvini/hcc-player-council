@@ -47,14 +47,20 @@ const { loadElection, rerenderElection } = lazy('./election.js');
 const { loadBallot, rerenderBallot } = lazy('./ballot.js');
 const { loadVote, rerenderVote } = lazy('./vote.js');
 const { loadMarketplace, rerenderMarketplace, openProfileView, closeProfileView, closeTradeModal,
-  openFundsView, exitFundsView } = lazy('./marketplace.js');
+  openFundsView, exitFundsView, openTradeTab, exitTradeSubView,
+  restoreTradeTitle } = lazy('./marketplace.js');
 const { loadPolls, rerenderPolls } = lazy('./polls.js');
 const { loadAnnouncements, rerenderAnnouncements, openAnnouncement } = lazy('./announcements.js');
 const { loadGen2, rerenderGen2 } = lazy('./gen2.js');
 const { initGuideDemos, rerenderGuideDemos } = lazy('./guide-demos.js');
 const { loadCollections, rerenderCollections } = lazy('./collections.js');
 const { loadTraits, rerenderTraits } = lazy('./traits.js');
-const { openCodex, closeCodex, rerenderCodex, initCodexFind, renderGlossary } = lazy('./codex.js');
+const { openCodex, closeCodex, rerenderCodex, renderGlossary } = lazy('./codex.js');
+// Site search. Both front doors are here: the archive's own box on the Collections page,
+// and the palette behind the nav magnifier, "/" and Ctrl/Cmd-K. Loaded at boot rather
+// than lazily, because it has to answer a keystroke on a page nobody has clicked into —
+// it is a small module, and it fetches nothing until someone types.
+const { initSearchPalette, initCollectionsSearch, rerenderSearch } = lazy('./search.js');
 // Glossary links in prose. i18n.js decorates after every translation pass, which covers a
 // cold load and a language switch; this covers the third way a panel becomes visible,
 // which is someone clicking the nav. A panel nobody has looked at yet has no layout, and
@@ -83,6 +89,7 @@ document.querySelectorAll('.lang-btn').forEach(btn => {
     rerenderCollections();
     rerenderTraits();
     rerenderCodex();
+    rerenderSearch();
     if (glossaryPainted) renderGlossary();
     rerenderGuideDemos();
     rerenderCouncilBoard();
@@ -240,16 +247,24 @@ function selectTab(name, updateUrl = true) {
   // Re-selecting Trade (nav click, or a popstate back to /trade) while its profile
   // view is open should land on the marketplace, not a stale profile. route()'s
   // /profile/{slug} path re-opens the view right after, so deep links still work.
-  else if (name === 'trade') { closeProfileView(); exitFundsView(); }
+  // A nav click (updateUrl) means the marketplace itself, so any sub-view steps aside and
+  // the pushed /trade below matches what's on screen. route() passes updateUrl false and
+  // opens the view the URL actually names, which is why the reset is not unconditional:
+  // doing it there would paint Buy for a frame on the way to every /trade/<view> address.
+  else if (name === 'trade') { closeProfileView(); exitFundsView(); if (updateUrl) exitTradeSubView(); }
   if (name === 'roadmap'   && !roadmapLoaded)   { roadmapLoaded   = true; loadGen2(); }
   if (name === 'collections' && !collectionsLoaded) {
     collectionsLoaded = true;
     loadCollections();
-    initCodexFind();   // the search spans all four kinds, so it doesn't wait on the archive
+    initCollectionsSearch(gotoSearchResult);   // one matcher over pages and the archive
   }
   // A nav click on Collections means the archive, not whatever codex page was last open.
   // route() re-opens the page straight after when the URL asks for one.
   if (name === 'collections') closeCodex();
+  // Marketplace views name the browser tab after themselves (Sell, Sales history, Cash out).
+  // Leaving for another part of the site has to hand that name back, or a member who wandered
+  // off from Sell is still looking at a tab labelled Sell.
+  if (name !== 'trade' && tradeLoaded) restoreTradeTitle();
   if (updateUrl && location.pathname !== urlFor(name)) history.pushState(null, '', urlFor(name));
   const panel = document.getElementById(`panel-${name}`);
   if (panel) linkGlossaryTerms(panel);
@@ -489,6 +504,11 @@ const ROUTE_TABS = ['club', 'announcements', 'council', 'apply', 'polls', 'roadm
 // release page, a trait tile, a Creature card) gets in-page navigation for free.
 const CODEX_KINDS = new Set(['release', 'item', 'trait', 'creature', 'term']);
 
+// Every /trade/<x> the marketplace paints as a view of its own. Read by route() and by the
+// in-page link handler; a link to anything else under /trade falls through to the browser,
+// which is the right answer for a bad address.
+const TRADE_VIEWS = new Set(['buy', 'sell', 'transfer', 'sales', 'history']);
+
 function urlFor(name, sub) {
   return name === 'club' && !sub ? '/' : `/${name}${sub ? `/${sub}` : ''}`;
 }
@@ -523,6 +543,29 @@ function route(pathname) {
   if (tab === 'trade' && (sub === 'add-funds' || sub === 'cash-out')) {
     selectTab('trade', false);
     openFundsView(sub, { updateUrl: false });
+    return;
+  }
+  // Buy is the marketplace's front door, so /trade/buy and /trade are one page. People guess
+  // the longer one, so it works — and then normalises, the way /apply and /holders do, rather
+  // than leaving two addresses for the same view.
+  if (tab === 'trade' && sub === 'buy') {
+    sub = null;
+    history.replaceState(null, '', '/trade' + location.search);
+  }
+  // Every marketplace view is an address: /trade/sell, /trade/sales, /trade/history and the
+  // rest. Routed here rather than through the generic sub-tab lookup below, because they are
+  // views inside one panel, not sub-panels the shell can find by attribute.
+  if (tab === 'trade' && TRADE_VIEWS.has(sub)) {
+    selectTab('trade', false);
+    openTradeTab(sub, { updateUrl: false });
+    return;
+  }
+  // Bare /trade is Buy — including on the way BACK from one of the views above, which is
+  // the case that needs saying: without this, Back changed the address and left the old
+  // view on screen underneath it.
+  if (tab === 'trade' && !sub) {
+    selectTab('trade', false);
+    openTradeTab('buy', { updateUrl: false });
     return;
   }
   // Any other /trade/<x> is a stale bookmark or a typo — normalise it rather than leaving
@@ -576,12 +619,16 @@ window.addEventListener('popstate', () => route(location.pathname));
 // The marketplace's two money views own paths too, and the glossary and the Guides link
 // straight at them. Without this they fall through to the browser: a full reload and a
 // white flash on the way to a page the app could have painted in place.
-const MARKET_SUBS = new Set(['add-funds', 'cash-out']);
+const MARKET_SUBS = new Set([...TRADE_VIEWS, 'add-funds', 'cash-out']);
 document.addEventListener('click', event => {
   const link = event.target.closest && event.target.closest(
     'a[href^="/collections/"], a[href^="/trade/"], a[href^="/announcements"]');
   if (!link) return;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+  // Already handled: the search boxes cancel the click and route it themselves, because a
+  // result can be any address on the site rather than one of the three prefixes above.
+  // Without this a codex result found through search pushed two history entries.
+  if (event.defaultPrevented) return;
   const segs = link.getAttribute('href').split('?')[0].split('/').filter(Boolean);
   if (segs[0] === 'announcements') {
     // Nothing to check: the tab handles its own addresses, including the feed itself.
@@ -605,6 +652,19 @@ document.addEventListener('click', event => {
   route(location.pathname);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
+
+// The header search, wired now so it answers "/" and Ctrl/Cmd-K on a cold page. Its
+// results are addresses anywhere on the site, not only the three prefixes the handler
+// above catches, so it navigates through route() itself rather than leaning on that. A
+// modified or middle click never reaches here: the palette leaves those to the browser.
+function gotoSearchResult(href) {
+  document.querySelectorAll('dialog[open]').forEach(d => d.close());
+  if (document.body.classList.contains('trade-modal-open')) closeTradeModal();
+  if (href !== location.pathname + location.search) history.pushState(null, '', href);
+  route(href.split('?')[0]);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+initSearchPalette(gotoSearchResult);
 
 // Legacy hash links switch tabs; the URL is normalized to the path form. Routing
 // through route() keeps the '#apply' → /council/vote alias working here too.

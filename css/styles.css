@@ -114,6 +114,72 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ---------- SCROLLBARS ----------
+   A scroll box paints its bar inside the border box, and Chromium won't clip that bar to
+   `border-radius` — so on every rounded panel the bar ran straight past the corner and
+   floated over the card's edge (worst on the trade filter rail, radius 20px). The fix is a
+   margin on `::-webkit-scrollbar-track`, which pulls both ends of the track clear of the
+   curve; `--sb-inset` says how far, roughly half the box's corner radius.
+
+   Chromium and Safari ignore the ::-webkit-scrollbar pseudos on any element that sets
+   `scrollbar-width` or `scrollbar-color`, so those two are handed back to `auto` wherever
+   the pseudos work. Firefox styles scrollbars only through that standard pair and can't
+   inset a track, so it keeps the thin brand bar and draws it as it always did.
+
+   `--sb-inset` inherits, so a scroller nested inside one of these picks up the same inset
+   unless it sets its own — which is what we want, since the filter popovers inside the rail
+   are rounded too. Any new rounded scroll box belongs in this list. */
+.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick, .trade-modal-info,
+.trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks, .srch-list,
+.contrib-code, .ann-code {
+  --sb-inset: 10px;
+  scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent;
+}
+/* Deeper corners need a longer run-up; shallow ones would only waste track. */
+.trade-side-card { --sb-inset: 12px; }
+.trade-modal-info, .trade-safety-card { --sb-inset: 16px; }
+.trade-flt-hits, .trade-pick, .trade-xfer-chips, .contrib-code, .ann-code { --sb-inset: 8px; }
+
+@supports selector(::-webkit-scrollbar) {
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code) { scrollbar-width: auto; scrollbar-color: auto; }
+
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar { width: 10px; height: 10px; }
+
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-track,
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-corner { background: transparent; }
+
+  /* The margin is what keeps the bar off the corners: block ends for the vertical bar,
+     inline ends for the horizontal one. Setting both on one track would eat its width. */
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-track:vertical { margin-block: var(--sb-inset); }
+
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-track:horizontal { margin-inline: var(--sb-inset); }
+
+  /* Transparent border + padding-box clip: the thumb keeps a hit area the full width of
+     the bar but paints as a slim pill sitting clear of the panel edge. */
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-thumb {
+    background: var(--hr-tuna); border-radius: var(--hr-radius-pill);
+    border: 3px solid transparent; background-clip: padding-box;
+  }
+
+  :is(.nav-menu, .trade-side-card, .trade-flt-pop, .trade-flt-hits, .trade-pick,
+      .trade-modal-info, .trade-safety-card, .trade-xfer-chips, .gdemo-safety, .gdemo-perks,
+      .srch-list, .contrib-code, .ann-code)::-webkit-scrollbar-thumb:hover { background: var(--hr-salmon); }
+}
+
 /* ---------- LAYOUT ---------- */
 .wrap { max-width: 920px; margin: 0 auto; padding: 0 22px; }
 section { padding: 40px 0; }
@@ -240,7 +306,10 @@ h1 .pop { color: var(--hr-primary); }
 }
 
 /* Inline menu (desktop) */
-.nav-menu { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+/* The auto margin belongs to whichever child ends the cluster, and that is the search
+   button now — left on the menu it would have absorbed the free space in the middle and
+   stranded the magnifier alone against the right edge of the screen. */
+.nav-menu { display: flex; align-items: center; gap: 8px; }
 .nav-links { display: flex; align-items: center; gap: 4px; list-style: none; }
 .nav-links > li { display: flex; }
 
@@ -404,6 +473,16 @@ h1 .pop { color: var(--hr-primary); }
   .nav-toggle[aria-expanded="true"] .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
   .nav-toggle[aria-expanded="true"] .nav-toggle-bars::after  { transform: translateY(-6px) rotate(-45deg); }
 
+  /* Search sits beside the burger. The sheet is absolutely positioned here, so the row is
+     these four children and they are ordered outright rather than by their place in the
+     markup — the button is written after the menu so it ends the desktop cluster. How the
+     button then looks is set beside its own rules, far below, because these lines come
+     first in the file and would lose every property the two blocks share. */
+  .nav-logo { order: 1; }
+  .nav-current { order: 2; }
+  .nav-srch { order: 3; }
+  .nav-toggle { order: 4; }
+
   /* Menu becomes a sheet dropping from under the bar */
   .nav-menu {
     position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 60;
@@ -431,7 +510,7 @@ h1 .pop { color: var(--hr-primary); }
   .nav-group { position: static; }
   .nav-drop-label { display: none; }
   .nav-dropdown {
-    position: static; min-width: 0; padding: 0 0 4px 12px;
+    position: static; min-width: 0; padding: 0 0 0 12px;
     background: transparent; border: none; box-shadow: none;
     backdrop-filter: none; -webkit-backdrop-filter: none;
     opacity: 1; visibility: visible; transform: none; pointer-events: auto;
@@ -439,6 +518,11 @@ h1 .pop { color: var(--hr-primary); }
     transition: max-height .22s ease;
   }
   .nav-dropdown::before { display: none; }
+  /* Breathing room under the last row sits on the row, not on the container: a
+     collapsed accordion holds max-height:0, but its own padding still painted, so
+     the open page's mint pill bled through as a green strip under a closed group
+     (and the strip took taps). With no padding the closed box is truly 0 tall. */
+  .nav-dropdown > .nav-link:last-child { margin-bottom: 4px; }
   /* Don't let hover/focus expand the accordion on touch — only an explicit tap does.
      The .is-open rule sits last so a tapped-open group wins over a lingering :hover.
      Scoped to .nav-links, because the language row is a .nav-group too but is never an
@@ -449,6 +533,9 @@ h1 .pop { color: var(--hr-primary); }
   .nav-links .nav-group:hover > .nav-dropdown,
   .nav-links .nav-group:focus-within > .nav-dropdown { max-height: 0; }
   .nav-links .nav-group.is-open > .nav-dropdown { max-height: 340px; }
+  /* Hover doesn't open an accordion here, so it mustn't flip the caret either — the
+     sticky hover a tap leaves behind kept a closed group wearing an open caret. */
+  .nav-links .nav-group:not(.is-open) > .nav-trigger::after { transform: translateY(-2px) rotate(45deg); }
 
   /* Language: the trigger drops away and the codes lay out as a wrapped row */
   .lang-switcher { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--hr-line); }
@@ -4776,9 +4863,12 @@ footer { margin-top: 28px; }
 }
 .trade-ack input { margin-top: 2px; accent-color: var(--hr-primary); flex: 0 0 auto; width: 16px; height: 16px; cursor: pointer; }
 
-/* Mini spinner used in the status row */
+/* Mini spinner. `inline-block` is not decoration: an inline element ignores width and
+   height, so everywhere this sits in a plain block instead of a flex row — the grid's
+   "Loading recent sales…" state, the "still cataloguing" one — it collapsed to a 4px
+   sliver of its own border, spinning a shape too thin to read as spinning. */
 .trade-mini-spin {
-  width: 16px; height: 16px; flex: 0 0 auto;
+  display: inline-block; width: 16px; height: 16px; flex: 0 0 auto;
   border: 2px solid var(--hr-line-strong); border-top-color: var(--hr-blueberry);
   border-radius: 50%; animation: spin .8s linear infinite;
 }
@@ -4966,7 +5056,6 @@ button.trade-net:hover { box-shadow: 0 0 12px var(--hr-banana-25); }
   box-shadow: var(--hr-shadow-2), inset 0 1px 0 rgba(255,255,255,.06);
   max-height: calc(100vh - var(--trade-nav-clear) - 24px);
   overflow-y: auto; overscroll-behavior: contain;
-  scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent;
   animation: trade-flt-in .45s cubic-bezier(.2,.7,.2,1) both;
 }
 @keyframes trade-flt-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -5043,7 +5132,6 @@ button.trade-net:hover { box-shadow: 0 0 12px var(--hr-banana-25); }
   box-sizing: border-box; margin-top: 6px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
   background: rgba(0,0,0,.25);
-  scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent;
 }
 
 /* Rarity tier chips — each lights up in its tier color when selected. */
@@ -5355,6 +5443,7 @@ body.trade-sheet-open { overflow: hidden; }
   .trade-side-card {
     position: absolute; left: 0; right: 0; bottom: 0;
     max-height: 84dvh; border-radius: var(--hr-radius-2xl) var(--hr-radius-2xl) 0 0;
+    --sb-inset: 16px; /* deeper top corner than the desktop rail — see SCROLLBARS */
     border-bottom: none; padding-bottom: max(18px, env(safe-area-inset-bottom));
     transform: translateY(105%);
     transition: transform .28s cubic-bezier(.2,.7,.2,1);
@@ -5428,6 +5517,9 @@ body.trade-sheet-open { overflow: hidden; }
   grid-column: 1 / -1; text-align: center; padding: 48px 20px; color: var(--hr-fg-2);
 }
 .trade-grid-state-ico { font-size: 40px; margin-bottom: 10px; }
+/* The loading state stacks spinner over caption, so give it the same room the icon gets. */
+.trade-grid-state > .trade-mini-spin { margin-bottom: 4px; }
+.trade-grid-state p { margin: 0.6em 0 0; }
 
 /* Tile (a button) */
 .trade-tile {
@@ -5865,7 +5957,6 @@ body.trade-sheet-open { overflow: hidden; }
   display: flex; flex-direction: column; gap: 1px; max-height: 340px; overflow-y: auto;
   padding: 4px; border-radius: var(--hr-radius-md);
   background: rgba(0,0,0,.25); border: 1px solid var(--hr-line);
-  scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent;
 }
 /* A result has to say which slot it came from — "Bat Nose" and "Bat Shades" are different
    drawers, and picking the wrong one is a filter that quietly matches nothing. */
@@ -6008,15 +6099,7 @@ body.trade-modal-open { overflow: hidden; }
 .trade-modal-media .trade-tile-noimg { width: 100%; height: 100%; min-height: 240px; }
 .trade-modal-info { padding: 26px 24px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 
-/* Thin, brand-dark scrollbars on the modal info column + sell picker (the Windows
-   default scrollbar reads as a white slab on these dark surfaces). */
-.trade-modal-info, .trade-pick { scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent; }
-.trade-modal-info::-webkit-scrollbar, .trade-pick::-webkit-scrollbar { width: 8px; }
-.trade-modal-info::-webkit-scrollbar-track, .trade-pick::-webkit-scrollbar-track { background: transparent; }
-.trade-modal-info::-webkit-scrollbar-thumb, .trade-pick::-webkit-scrollbar-thumb {
-  background: var(--hr-tuna); border-radius: 4px;
-}
-.trade-modal-info::-webkit-scrollbar-thumb:hover, .trade-pick::-webkit-scrollbar-thumb:hover { background: var(--hr-salmon); }
+/* Both of these scroll: see the SCROLLBARS section for the brand bar they wear. */
 .trade-modal-name { font-family: var(--hr-sans); font-weight: 900; font-size: 21px; color: var(--hr-fg-0); margin: 0 0 12px; }
 .trade-modal-price { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .trade-modal-price-eth { font-family: var(--hr-sans); font-weight: 900; font-size: 24px; color: var(--hr-primary); text-shadow: 0 0 22px var(--hr-primary-25); }
@@ -6417,7 +6500,6 @@ a.trade-buy-btn { display: inline-flex; }
   background: linear-gradient(180deg, rgba(40,39,45,.97), rgba(16,15,19,.99));
   box-shadow: var(--hr-shadow-3), 0 0 60px var(--hr-primary-25);
   animation: apply-rise .45s cubic-bezier(.16,.84,.3,1) both;
-  scrollbar-width: thin; scrollbar-color: var(--hr-tuna) transparent;
 }
 .trade-safety-h {
   font-family: var(--hr-sans); font-weight: 900; font-size: clamp(20px, 3vw, 25px);
@@ -9706,22 +9788,24 @@ span.hp-statchip-ico { font-size: 17px; line-height: 22px; text-align: center; c
   .col-card-link:hover::after { transform: none; }
 }
 
-/* The codex front door. One box over releases, items, traits and Creature numbers, sitting
-   above the sub-nav so it is there on the archive, the trait showcase and every entity
-   page. Results are links, never filters. */
-.cdx-find-wrap { max-width: 1180px; margin: 0 auto; padding: 26px 24px 0; }
-.cdx-find { position: relative; z-index: 30; }
-.cdx-find-lbl {
+/* Site search. One set of rows serves both front doors — the archive's own box above the
+   Collections sub-nav, and the palette behind the nav magnifier — so a result looks the
+   same wherever you found it. Results are links, never filters. */
+.srch-wrap { max-width: 1180px; margin: 0 auto; padding: 26px 24px 0; }
+.srch { position: relative; z-index: 30; }
+.srch-lbl {
   position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
-.cdx-find-ico {
+.srch-ico {
   /* Above the input: the input paints its own background and comes after this in the
      document, so without a layer of its own the icon disappears under it. */
-  position: absolute; left: 17px; top: 50%; transform: translateY(-50%); z-index: 1;
-  font-size: 14px; opacity: .5; pointer-events: none;
+  position: absolute; left: 16px; top: 50%; transform: translateY(-50%); z-index: 1;
+  display: block; color: var(--hr-fg-3); pointer-events: none;
 }
-.cdx-find-in {
+.srch-ico-svg { display: block; }
+.srch-in:focus ~ .srch-ico, .srch:focus-within .srch-ico { color: var(--hr-primary); }
+.srch-in {
   width: 100%; box-sizing: border-box; padding: 14px 18px 14px 44px;
   border-radius: var(--hr-radius-pill); font: 600 14px/1 var(--hr-sans);
   color: var(--hr-fg-0); border: 1px solid var(--hr-line-strong);
@@ -9729,49 +9813,180 @@ span.hp-statchip-ico { font-size: 17px; line-height: 22px; text-align: center; c
   backdrop-filter: blur(8px);
   transition: border-color .2s, box-shadow .2s;
 }
-.cdx-find-in::placeholder { color: var(--hr-fg-4); }
-.cdx-find-in:focus {
+.srch-in::placeholder { color: var(--hr-fg-4); }
+/* Chromium draws its own clear button inside type="search". The palette has one of its
+   own beside it, and two crosses in a row read as a mistake. */
+.srch-pal-field .srch-in::-webkit-search-cancel-button { display: none; }
+.srch-in:focus {
   outline: none; border-color: var(--hr-primary);
   box-shadow: 0 0 0 3px var(--hr-primary-25);
 }
 
-.cdx-find-list {
+.srch-list {
   position: absolute; left: 0; right: 0; top: calc(100% + 8px);
   max-height: min(64vh, 520px); overflow-y: auto; padding: 8px;
   border-radius: var(--hr-radius-lg); border: 1px solid var(--hr-line-strong);
   background: rgba(18,17,21,.97); backdrop-filter: blur(14px);
   box-shadow: var(--hr-shadow-2);
 }
-.cdx-find-group + .cdx-find-group { margin-top: 6px; border-top: 1px solid var(--hr-line); padding-top: 6px; }
-.cdx-find-g-h {
+.srch-group + .srch-group { margin-top: 6px; border-top: 1px solid var(--hr-line); padding-top: 6px; }
+.srch-g-h {
   display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 6px;
   font: 800 10.5px/1 var(--hr-sans); letter-spacing: .08em;
   text-transform: uppercase; color: var(--hr-fg-3);
 }
-.cdx-find-g-h i { font: 600 10.5px/1 var(--hr-sans); font-style: normal; color: var(--hr-fg-4); text-transform: none; letter-spacing: 0; }
-.cdx-find-row {
+.srch-g-h i { font: 600 10.5px/1 var(--hr-sans); font-style: normal; color: var(--hr-fg-4); text-transform: none; letter-spacing: 0; }
+.srch-row {
   display: flex; align-items: center; gap: 11px; padding: 8px 10px;
   border-radius: var(--hr-radius-md); text-decoration: none;
 }
-.cdx-find-row:hover, .cdx-find-row.is-on { background: rgba(255,255,255,.07); }
-.cdx-find-shot {
+.srch-row:hover, .srch-row.is-on { background: rgba(255,255,255,.07); }
+.srch-shot {
   flex: 0 0 auto; width: 38px; height: 38px; overflow: hidden;
   border-radius: var(--hr-radius-sm); background: rgba(255,255,255,.04);
 }
-.cdx-find-shot img { width: 100%; height: 100%; object-fit: contain; }
-.cdx-find-shot.is-empty { background: rgba(255,255,255,.02); }
-.cdx-find-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cdx-find-n { font: 700 13px/1.25 var(--hr-sans); color: var(--hr-fg-0); }
-.cdx-find-m { font: 600 11.5px/1.2 var(--hr-sans); color: var(--hr-fg-3); }
-.cdx-find-none { margin: 0; padding: 20px 12px; text-align: center; font: 600 13px/1.4 var(--hr-sans); color: var(--hr-fg-3); }
+.srch-shot img { width: 100%; height: 100%; object-fit: contain; }
+.srch-shot.is-empty { background: rgba(255,255,255,.02); }
+.srch-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.srch-n { font: 700 13px/1.25 var(--hr-sans); color: var(--hr-fg-0); }
+.srch-m { font: 600 11.5px/1.2 var(--hr-sans); color: var(--hr-fg-3); }
+.srch-none { margin: 0; padding: 20px 12px; text-align: center; font: 600 13px/1.4 var(--hr-sans); color: var(--hr-fg-3); }
 
 @media (max-width: 760px) {
-  .cdx-find-wrap { padding: 18px 16px 0; }
-  .cdx-find-in { padding: 12px 15px 12px 40px; font-size: 16px; }  /* 16px stops iOS zooming on focus */
+  .srch-wrap { padding: 18px 16px 0; }
+  .srch-in { padding: 12px 15px 12px 40px; font-size: 16px; }  /* 16px stops iOS zooming on focus */
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cdx-find-in { transition: none; }
+  .srch-in { transition: none; }
+}
+
+/* The nav magnifier. The row has no space for an input and a search wants to be one
+   keystroke away, so this is a pill the width of an icon that opens the palette. The "/"
+   hint is the affordance for the shortcut, and it is the first thing to go when the row
+   gets tight. */
+.nav-srch {
+  flex: none; display: inline-flex; align-items: center; gap: 7px; margin-right: auto;
+  min-height: 40px; padding: 0 11px; cursor: pointer;
+  border: 1px solid var(--hr-line); border-radius: var(--hr-radius-pill);
+  background: rgba(255,255,255,.03); color: var(--hr-fg-2);
+  transition: transform .15s cubic-bezier(.2,0,0,1), background .12s, border-color .12s, color .12s;
+}
+.nav-srch:hover {
+  background: var(--hr-bg-3); color: var(--hr-fg-0);
+  border-color: var(--hr-line-strong); transform: translateY(-1px);
+}
+.nav-srch:active { transform: translateY(0) scale(.96); }
+.nav-srch:focus-visible { outline: 2px solid var(--hr-primary); outline-offset: 2px; }
+.nav-srch[aria-expanded="true"] {
+  background: var(--hr-primary-25); border-color: var(--hr-primary); color: var(--hr-fg-0);
+}
+.nav-srch-ico { display: block; }
+.nav-srch-key {
+  min-width: 17px; padding: 2px 5px; border-radius: 5px;
+  border: 1px solid var(--hr-line-strong); background: rgba(0,0,0,.35);
+  font: 800 10.5px/1 var(--hr-sans); color: var(--hr-fg-3); text-align: center;
+}
+
+/* On the compact bar it is a second app-bar button, so it matches the burger exactly
+   rather than staying a pill — a 44px pill is a circle beside a rounded square. */
+@media (max-width: 1150px) {
+  .nav-srch {
+    width: 44px; height: 44px; min-height: 0; padding: 0; margin-right: 0;
+    justify-content: center;
+    border-color: var(--hr-line-strong); border-radius: var(--hr-radius-md);
+    background: var(--hr-bg-3); box-shadow: var(--hr-shadow-btn);
+  }
+  .nav-srch:hover { transform: none; background: var(--hr-bg-3); }
+  .nav-srch:active { transform: scale(.94); }
+  .nav-srch-ico .srch-ico-svg { width: 19px; height: 19px; }
+  .nav-srch-key { display: none; }   /* no keyboard to shortcut from */
+}
+
+/* The palette. Sits high rather than centred, the way a command bar does: the list grows
+   downward from a fixed point instead of shunting the box up the screen with every
+   keystroke. */
+body.srch-open { overflow: hidden; }
+.srch-pal { position: fixed; inset: 0; z-index: 1200; padding: 12vh 20px 20px; }
+.srch-pal[hidden] { display: none; }
+.srch-pal-scrim {
+  position: absolute; inset: 0;
+  background: rgba(1,1,4,.74); backdrop-filter: blur(6px);
+}
+.srch-pal-card {
+  position: relative; z-index: 1; margin: 0 auto; width: min(680px, 100%);
+  max-height: 76vh; display: flex; flex-direction: column; overflow: hidden;
+  padding: 14px;
+  border-radius: var(--hr-radius-2xl); border: 1px solid var(--hr-line-strong);
+  background: linear-gradient(180deg, rgba(40,39,45,.96), rgba(16,15,19,.98));
+  box-shadow: var(--hr-shadow-3);
+  animation: apply-rise .34s cubic-bezier(.16,.84,.3,1) both;
+}
+/* Brand light behind the field, so the card reads as part of the club rather than as a
+   browser dialog. Pinned behind the content and immune to the pointer. */
+.srch-pal-glow {
+  position: absolute; left: 50%; top: -140px; width: 520px; height: 300px;
+  transform: translateX(-50%); pointer-events: none;
+  background:
+    radial-gradient(closest-side, var(--hr-primary-25), transparent 70%),
+    radial-gradient(closest-side, rgba(133,97,255,.18), transparent 72%);
+  background-position: 30% 40%, 72% 60%;
+  background-size: 70% 100%, 70% 100%;
+  background-repeat: no-repeat;
+  filter: blur(6px);
+}
+.srch-pal-field { flex: none; }
+.srch-pal-field .srch-in { padding-right: 46px; }
+.srch-pal-x {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
+  border: 1px solid transparent; border-radius: 50%;
+  background: transparent; color: var(--hr-fg-3);
+  font: 700 20px/1 var(--hr-sans);
+}
+.srch-pal-x:hover { background: rgba(255,255,255,.08); color: var(--hr-fg-0); }
+.srch-pal-x:focus-visible { outline: 2px solid var(--hr-primary); outline-offset: 1px; }
+/* Inside the card the list is the body, not a layer floating over the page: it flows, and
+   the card grows with it and shrinks back when a query stops matching. */
+.srch-pal-list {
+  position: static; left: auto; right: auto; top: auto;
+  flex: 1 1 auto; min-height: 0; max-height: none;
+  margin-top: 10px; padding: 0 0 8px;
+  border: 0; background: none; backdrop-filter: none; box-shadow: none;
+  border-radius: 0;
+}
+.srch-pal-list:empty { display: none; }
+.srch-pal-hint {
+  flex: none; margin: 0; padding: 10px 12px 1px;
+  font: 600 11px/1.3 var(--hr-sans); color: var(--hr-fg-4);
+}
+/* A rule needs something to divide. Before a query the list is empty and hidden, so an
+   unconditional border-top here drew a stray line straight under the field. A query that
+   matches nothing still fills the list (with the "nothing matches" line), so that keeps
+   its divider. */
+.srch-pal-list:not(:empty) + .srch-pal-hint { border-top: 1px solid var(--hr-line); }
+
+@media (max-width: 760px) {
+  /* Half a screen of empty scrim above the box wastes the room the results need, and the
+     keyboard takes the bottom half. */
+  .srch-pal { padding: 6px 6px 6px; }
+  .srch-pal-card {
+    max-height: calc(100vh - 12px); max-height: calc(100dvh - 12px);
+    padding: 9px; border-radius: var(--hr-radius-lg);
+  }
+  .srch-pal-hint { display: none; }   /* no arrow keys and no Esc to advertise */
+  /* The field keeps its 16px text — anything smaller and iOS zooms the page on focus —
+     but the placeholder is only a label, so it may be smaller and fit more of itself. */
+  .srch-pal-field .srch-in { padding-left: 36px; padding-right: 38px; }
+  .srch-pal-field .srch-in::placeholder { font-size: 13.5px; }
+  .srch-pal-field .srch-ico { left: 13px; }
+  .srch-pal-x { right: 5px; width: 28px; height: 28px; }
+  .srch-pal-list { margin-top: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-srch { transition: none; }
+  .srch-pal-card { animation: none; }
 }
 
 /* The glossary index and the term pages. A term has no picture, so its page leans on

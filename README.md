@@ -56,6 +56,56 @@ Without key+secret, the **LAND** card CTA is hidden and **Creatures** fall back 
 keyless hosted on-ramp ([toolkit.immutable.com/onramp](https://toolkit.immutable.com/onramp/)) —
 which can't pin the network, so the buyer must pick Immutable zkEVM themselves.
 
+## Site search
+
+One box over the whole site. It has two front doors, and they run the same matcher, so
+they can never disagree about what a query finds:
+
+| Where | How you open it |
+| --- | --- |
+| The nav magnifier, on every page | click it, press `/`, or `Ctrl`/`Cmd` + `K` |
+| The archive's own box, above the Collections sub-nav | it is always on screen there |
+
+Every result is a **link to a real address**, never a filter. The two boxes inside the
+Collections grids narrow what you are already looking at; this one takes you somewhere.
+Six kinds are searched at once:
+
+| Kind | Where the data comes from |
+| --- | --- |
+| Pages | `/api/search/pages` — see below |
+| Creature, by the number people actually say | the trait catalogue's total, so `/collections/creature/777` is only offered if 777 exists |
+| Glossary terms | `js/glossary.js` |
+| Traits | `/api/market/creatures/traits`, the catalogue the trait pages already fetch |
+| Items and releases | `collections.json`, the archive the timeline already holds |
+
+A bare number is offered as a Creature first, because it is an exact answer. Pages come
+next: there are only four dozen of them, and a common word (`perks`, `cash out`, `polls`) almost
+always means one, where the archive groups run to thousands of rows and are reached by a
+distinctive name. A page matches on its name outright, and on its summary or its address
+as a weaker match ranked below every name hit, because four dozen terse titles do not cover the
+words a member reaches for — `fee` is in no page title and in two summaries.
+
+**The page index is generated, not hand-kept.** `GET /api/search/pages` is built from
+`SECTION_CARDS` in `server.js`, the same table that already feeds the share cards and the
+sitemap. Adding a page there makes it findable the same day, with no second list to fall
+out of step. The rows travel as *unresolved* en.json keys, so the client fills them from
+its own translations and results come out in the reader's language; the handful of routes
+carrying literal copy stay English, exactly as their share cards do. Two exclusions, the
+same ones the sitemap makes: a canonical alias is another name for a route already listed,
+and a holder's profile is theirs to share, not ours to index.
+
+**What it costs.** Nothing until someone types. `js/search.js` is wired at boot because it
+has to answer a keystroke on a page nobody has clicked into, but it fetches nothing then:
+the page index is a few KB on the first query, and `js/codex.js` plus the 180KB archive are
+imported only when a query needs them. Failing to load the archive narrows the results to
+pages; it never takes the box down.
+
+**Navigation.** A row is a real `<a href>`, so a middle or modified click opens a new tab
+and a crawler sees an address. A plain click is cancelled and routed in place by the box
+that rendered it — not by the central handler in `js/app.js`, which only catches three path
+prefixes, where a result can be any address on the site. That handler stands down on
+`event.defaultPrevented` so a result never lands two entries in the history.
+
 ## Gen 2 roadmap (two boards)
 
 The Roadmap tab holds three sub-tabs: **Milestones** (`/roadmap`), the hand-maintained
@@ -699,6 +749,37 @@ The **Market** tab shows floor prices and weekly sale-price history for Creature
 
 All data is fetched server-side and cached for 30 minutes (`/api/market`), so no
 database is needed — history is recomputed from on-chain/marketplace sales each refresh.
+
+### Every view has an address
+
+The marketplace is one panel with several views, and each one is a real URL the server also
+serves, stamps a head for, and lists in `sitemap.xml`:
+
+| Path | View |
+| --- | --- |
+| `/trade` | Buy — the front door. `/trade/buy` is the same page and normalises to this. |
+| `/trade/sell` | Sell / mass-list |
+| `/trade/transfer` | Transfer creatures, LAND or coins |
+| `/trade/sales` | Sales history + price chart |
+| `/trade/history` | This wallet's own activity |
+| `/trade/add-funds` · `/trade/cash-out` | The two money views |
+| `/profile/{slug}` | A holder's public showcase (opt-in) |
+
+What's a path and what's a query is the split between *which screen* and *what it's showing*:
+`?coll=land` (the collection), `?token=` (an open detail modal) and `?t=Type:Value` (a filter
+deep link from the trait showcase) mean the same thing on every view, so they ride as
+parameters and survive a tab switch — `/trade/sales?t=Eyes:Grey%20Sweetie%20Eyes` is a
+shareable "what does this trait actually sell for".
+
+The LAND market is the exception that gets its own head: `?coll=land` is not a detail of the
+Creature market, it's a different market on a different chain, so those addresses carry their
+own title, description and canonical, and their own lines in the sitemap.
+
+Client side, `openTradeTab()` in [js/marketplace.js](js/marketplace.js) is the one door — the
+tab strip, an in-page `<a href="/trade/sales">` and the router all go through it, so the view,
+the address and the browser-tab title can't disagree. Tab changes `pushState` (Back walks
+them); a collection switch or opening a token `replaceState`s, because those are the same
+place seen differently.
 
 ### Sales history, and the Immutable X years
 

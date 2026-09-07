@@ -932,5 +932,21 @@
   "a11y.pet.purploofie": "Purploofie pet",
   "a11y.pet.oranchuplump": "Oranchuplump pet",
   "a11y.slimepet": "Slime pet",
-  "holders.asOf": "{date} itibarıyla veriler"
+  "holders.asOf": "{date} itibarıyla veriler",
+  "srch.label": "Sitede ara",
+  "srch.ph": "Sayfalar, özellikler, creature'lar",
+  "srch.a11y.results": "Arama sonuçları",
+  "srch.none": "“{q}” ile eşleşen bir şey yok.",
+  "srch.more": "+{n} tane daha",
+  "srch.creature": "Sayfasını aç",
+  "srch.g.creature": "Creature",
+  "srch.g.trait": "Özellikler",
+  "srch.g.item": "Eşyalar",
+  "srch.g.release": "Çıkışlar",
+  "srch.g.term": "Sözlük",
+  "srch.g.page": "Sayfalar",
+  "srch.hint.keys": "Bir numara yaz, doğrudan o creature'a gider. Yön tuşlarıyla gez, Enter ile aç, Esc ile kapat.",
+  "srch.a11y.open": "Sitede ara",
+  "srch.a11y.close": "Aramayı kapat",
+  "srch.a11y.dialog": "Sitede ara"
 }

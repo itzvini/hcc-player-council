@@ -932,5 +932,21 @@
   "a11y.pet.purploofie": "Питомец Purploofie",
   "a11y.pet.oranchuplump": "Питомец Oranchuplump",
   "a11y.slimepet": "Slime pet",
-  "holders.asOf": "Данные на {date}"
+  "holders.asOf": "Данные на {date}",
+  "srch.label": "Поиск по сайту",
+  "srch.ph": "Страницы, признаки, существа",
+  "srch.a11y.results": "Результаты поиска",
+  "srch.none": "Здесь ничего не совпадает с «{q}».",
+  "srch.more": "ещё {n}",
+  "srch.creature": "Открыть его страницу",
+  "srch.g.creature": "Существо",
+  "srch.g.trait": "Признаки",
+  "srch.g.item": "Предметы",
+  "srch.g.release": "Релизы",
+  "srch.g.term": "Глоссарий",
+  "srch.g.page": "Страницы",
+  "srch.hint.keys": "Введите номер, чтобы перейти к этому существу. Стрелки для перехода, Enter чтобы открыть, Esc чтобы закрыть.",
+  "srch.a11y.open": "Поиск по сайту",
+  "srch.a11y.close": "Закрыть поиск",
+  "srch.a11y.dialog": "Поиск по сайту"
 }
