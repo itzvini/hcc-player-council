@@ -3179,7 +3179,17 @@ function shapeSalesHistory(feed, f, sortKey, meta, win) {
   // what the chart is drawing.
   if (win) {
     const inWindow = view.pricePoints.filter(p => p.t >= win.from && p.t <= win.to);
-    return { window: win, stats: salesStatsOf(inWindow), fetchedAt: view.fetchedAt };
+    // The drawing as well as the figures. Page 0's scatter is an even sample of the WHOLE
+    // matched set, so on a big set a six-month window inherits about eight of its four
+    // hundred dots: a true picture of nothing much. Re-sampled over the window it gets its
+    // own four hundred, its own bucket size for the trend line, and — a window being small
+    // enough to count — a label on every dot again.
+    return {
+      window: win,
+      stats: salesStatsOf(inWindow),
+      series: buildSalesSeries(inWindow),
+      fetchedAt: view.fetchedAt,
+    };
   }
   return browsePage(view, f, {
     ethUsd: meta.ethUsd,
@@ -8755,6 +8765,10 @@ server.headersTimeout   = 66000;
 
 server.listen(port, host, () => {
   console.log(`HCC Player Council site running on http://${host}:${port}`);
+  // LAND's sale history is eighty pages of OpenSea events, swept once and held. Started
+  // here so the first member to open Sales History doesn't wait on it — the tab answers
+  // from the live window meanwhile, and picks up the rest as soon as it lands.
+  landMarket.warmSalesArchive().catch(() => {});
   // Gas assist state at boot — the float is the thing that silently runs out, so say it
   // out loud on every deploy. Logs the faucet ADDRESS (public) and never the key.
   gasFaucet.health().then(h => {

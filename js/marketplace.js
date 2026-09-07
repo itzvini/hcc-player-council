@@ -245,6 +245,7 @@ let salesScale = 'auto';       // y axis: 'auto' (log when the spread demands it
 // whole run. null = showing everything.
 let salesWindow = null;        // {from, to} in ms — the visible slice of the timeline
 let salesWindowStats = null;   // its exact stats; null falls the rail back to the full range
+let salesZoom = null;          // the same shape as salesSeries, re-sampled over that period
 let salesWindowBusy = false;
 let salesWindowReq = 0;
 let salesWindowTimer = null;
@@ -4954,7 +4955,145 @@ function fmtChartTick(ms, spanDays) {
       : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   } catch { return ''; }
 }
-const chartSpanDays = ser => (ser ? Math.max(1, (ser.to - ser.from) / 86400000) : 1);
+/* Quick jumps down the timeline. The anchor is the LAST SALE, not today: filter to a trait
+   that stopped trading in 2023 and "7 days" counted from today would draw an empty chart,
+   where "the last 7 days this thing sold in" always has something in it. `d` is 0 for the
+   whole run, which is also the way back out of a zoom. */
+const CHART_RANGES = [
+  { d: 7,    k: 'trade.chart.range7d' },
+  { d: 30,   k: 'trade.chart.range1m' },
+  { d: 183,  k: 'trade.chart.range6m' },
+  { d: 365,  k: 'trade.chart.range1y' },
+  { d: 1095, k: 'trade.chart.range3y' },
+  { d: 0,    k: 'trade.chart.rangeAll' },
+];
+
+// Where a preset puts the x axis: back from the last sale, with a sliver of room past it so
+// the newest dot isn't cut in half by the frame. The breathing room is a slice of the WINDOW,
+// never of the whole run — two per cent of five years is five weeks, which turned a seven-day
+// button into a six-week chart. The left edge is a cut through the data, so it takes none.
+function chartRangeBounds(days) {
+  const ser = salesSeries;
+  if (!ser) return null;
+  const full = chartXBounds(ser);
+  if (!days) return full;
+  const span = days * 86400000;
+  return { min: Math.max(full.min, ser.to - span), max: Math.min(full.max, ser.to + span * .02) };
+}
+
+// Only the periods shorter than the data itself. Offering "3 years" on a trait with four
+// months of sales gives six buttons that all draw the same picture.
+function chartRangeOffers() {
+  const ser = salesSeries;
+  if (!ser) return [];
+  const span = ser.to - ser.from;
+  return CHART_RANGES.filter(r => !r.d || r.d * 86400000 < span);
+}
+
+// Which button the view on screen answers to: a preset's days when the axis sits exactly
+// where that button puts it, 0 for the whole run, -1 for a window dragged by hand.
+function activeChartRange() {
+  const x = salesChart?.scales?.x;
+  if (!x || !salesSeries) return -1;
+  for (const r of chartRangeOffers()) {
+    const b = chartRangeBounds(r.d);
+    if (b && Math.abs(x.min - b.min) <= 1 && Math.abs(x.max - b.max) <= 1) return r.d;
+  }
+  return -1;
+}
+
+function chartRangeHtml() {
+  const offers = chartRangeOffers();
+  if (!offers.length) return '';
+  const active = activeChartRange();
+  return `<div class="trade-chart-ranges" id="trade-chart-ranges" role="group"
+    aria-label="${esc(t('trade.chart.rangeAria'))}">${offers.map(r =>
+    `<button type="button" class="trade-chart-range" data-act="chart-range" data-d="${r.d}"
+      aria-pressed="${r.d === active}">${esc(t(r.k))}</button>`).join('')}</div>`;
+}
+
+/* A range button is a camera move, and the whole point of animating one is that the viewer
+   can follow it: every dot travels from where it was to where it belongs, so you watch the
+   plot open out of the period you asked for rather than being handed a different picture.
+
+   That only works while the POINT SET holds still. Chart.js tweens between two sets by
+   pairing them off by index, and dot 1 of a six-month window has nothing to do with dot 1
+   of five years — traced frame by frame, four hundred dots streamed off the left edge and
+   the arriving ones flew back in from further out still. Motion that means nothing.
+
+   So the order is: settle the data first (instantly, under the camera where it stands — the
+   window's sales land as a tight cluster inside the region we are about to open up), then
+   move the camera once, with both axes and everything final. The button answers on the
+   press, so the wait for the figures reads as the chart taking a breath, not as a stall. */
+const CHART_CAMERA_WAIT_MS = 320;
+let chartCamera = null;   // where the camera is going, once the data it needs has landed
+let chartCameraTimer = null;
+
+function applyChartRange(days) {
+  if (!salesChart || !salesSeries) return;
+  const b = chartRangeBounds(days);
+  if (!b) return;
+  chartCamera = b;
+  syncChartRange(days); // the press answers now; the chart follows in a beat
+  clearTimeout(chartCameraTimer);
+  // If the figures are slow, move anyway. A pressed button wired to a chart that hasn't
+  // budged is worse than a camera move that gets its detail a moment late.
+  chartCameraTimer = setTimeout(flyChartCamera, CHART_CAMERA_WAIT_MS);
+  const win = days ? {
+    // Clipped to the sales themselves, the same as a dragged window: the axis carries empty
+    // margin at both ends and the period line must not claim sales that aren't there.
+    from: Math.max(Math.round(b.min), salesSeries.from),
+    to: Math.min(Math.round(b.max), salesSeries.to),
+  } : null;
+  // `now` skips the wheel debounce: a button press is one deliberate answer, not a notch in
+  // a stream of them. A false return means the data on screen already suits the window, so
+  // there is nothing to wait for.
+  if (!setSalesWindow(win, { now: true })) flyChartCamera();
+}
+
+/* Fly the timeline to the period, by walking the AXIS there a frame at a time rather than
+   handing Chart.js two sets of bounds and letting it tween the dots between them.
+
+   The difference is register. Chart.js applies new bounds at once and then slides the dots
+   towards them, so for the length of the animation the labels underneath say one thing and
+   the dots say another — a sale sitting over the wrong month until the motion stops. Moving
+   the bounds themselves means every frame is a true chart of an intermediate window: labels,
+   gridlines, trend line and dots all agree the whole way, and what the viewer watches is the
+   frame opening out, which is what actually happened.
+
+   The price axis is set once, up front, with the point set — one change at the moment the
+   picture changes, rather than a second lurch under the first. */
+const CHART_FLY_MS = 460;
+let chartFlyRaf = 0;
+
+function flyChartCamera() {
+  clearTimeout(chartCameraTimer);
+  const b = chartCamera;
+  chartCamera = null;
+  cancelAnimationFrame(chartFlyRaf);
+  if (!b || !salesChart || !salesSeries) return;
+  applyChartYAxis(); // no-op after a redraw; matters when the camera moves on its own
+  const from = { min: salesChart.scales.x.min, max: salesChart.scales.x.max };
+  // Re-read the options object every time rather than holding a reference to it. Chart.js
+  // rebuilds its resolved options on each update, so a reference taken before the first
+  // frame spends the rest of the flight writing to an object nothing reads any more.
+  const setX = (min, max) => {
+    Object.assign(salesChart.options.scales.x, { min, max });
+    salesChart.update('none'); // the axis IS the animation; nothing else may tween under it
+  };
+  const settle = () => { setX(b.min, b.max); syncChartRange(); };
+  // Nothing to travel, or a reader who has asked not to be moved.
+  if (chartStill() || Math.abs(b.min - from.min) < 1) { settle(); return; }
+  const t0 = performance.now();
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / CHART_FLY_MS);
+    if (k >= 1) { settle(); return; }
+    const e = 1 - Math.pow(1 - k, 3); // ease out: quick to leave, gentle to arrive
+    setX(from.min + (b.min - from.min) * e, from.max + (b.max - from.max) * e);
+    chartFlyRaf = requestAnimationFrame(step);
+  };
+  chartFlyRaf = requestAnimationFrame(step);
+}
 
 // The x axis ends where the sales do. Left to pick its own round numbers, Chart.js drew a
 // 2020–2027 axis for a 2021–2026 collection and spent a quarter of the width on years that
@@ -4969,14 +5108,52 @@ function chartXBounds(ser) {
 // the chart head pins it either way.
 function salesScaleMode() {
   if (salesScale !== 'auto') return salesScale;
-  const st = salesSeries?.stats;
+  // Judged on what's drawn, not on the whole run: five years of Creature prices span four
+  // orders of magnitude and need the log axis, one month of them spans seven times and is
+  // unreadable on it. The toggle still pins whichever the member prefers.
+  const st = salesWindowStats || salesSeries?.stats;
   return st && st.loEth > 0 && st.hiEth / st.loEth > 50 ? 'log' : 'linear';
+}
+
+/* Where the price axis starts and stops, when it's linear.
+   Left to itself, Chart.js hunts for round tick values and drags the floor down to reach
+   one: six months of Creature sales running $113 to $782 got an axis from ZERO, spending
+   a third of the height on prices nothing has ever sold at and flattening the part anyone
+   came to read. Prices are not quantities; the axis owes them no zero.
+   The log axis needs none of this — decades are already round and already tight. */
+function chartYBounds() {
+  if (salesScaleMode() === 'log') return {};
+  const st = chartStats();
+  const lo = chartValue(st?.loEth, st?.loUsd);
+  const hi = chartValue(st?.hiEth, st?.hiUsd);
+  if (lo == null || hi == null || !(hi > 0)) return {};
+  const pad = Math.max((hi - lo) * .08, hi * .02);
+  // The floor gets whichever breathing room is TIGHTER: a slice of the range, or a quarter
+  // of the cheapest sale. On a wide spread the range's slice is bigger than the floor itself
+  // ($90 to $4,365 asks for $342 of room under a $90 sale) and the axis lands back on zero,
+  // which is the whole thing this function exists to prevent.
+  return { min: Math.max(lo - pad, lo * .75, 0), max: hi + pad };
 }
 
 // "Weekly average" — names the trend line after the bucket the server chose.
 function chartAvgLabel() {
   const keys = { day: 'trade.chart.avgDay', week: 'trade.chart.avgWeek', month: 'trade.chart.avgMonth' };
-  return t(keys[salesSeries?.bucket] || 'trade.chart.avgDay');
+  return t(keys[drawnSeries()?.bucket] || 'trade.chart.avgDay');
+}
+
+/* What actually gets drawn: the window's own dots and trend line once the server has sent
+   them, the whole run otherwise. Kept apart from `salesSeries`, which stays the whole run
+   for good — it is what the axis bounds, the range buttons and "All time" are measured
+   against, and a zoom that redefined those could never be undone. */
+function drawnSeries() { return salesZoom || salesSeries; }
+
+/* What the chart is showing, in words. LAND is the other market: it settles on Ethereum
+   through OpenSea, it never saw Immutable X, and what changes hands is a plot rather than
+   a Creature — so it can't borrow the Creature market's sentence. */
+function chartLeadKey() {
+  const land = coll === 'land';
+  if (fltActive()) return land ? 'trade.chart.leadLandFiltered' : 'trade.chart.leadFiltered';
+  return land ? 'trade.chart.leadLand' : 'trade.chart.lead';
 }
 
 // The figures for what's on screen: the zoomed window when there is one, the whole run
@@ -5000,12 +5177,14 @@ function chartStatsHtml() {
 // What the chart is and isn't showing, said plainly: the window it covers, and — when the
 // scatter had to be thinned — that it was.
 function chartNoteHtml() {
-  const ser = salesSeries;
+  const ser = drawnSeries();
   if (!ser) return '';
-  const notes = [esc(`${fmtSaleDate(new Date(ser.from).toISOString())} – ${fmtSaleDate(new Date(ser.to).toISOString())}`)];
+  // The span, unless the line above the chart is already giving it for this period.
+  const notes = salesWindow ? []
+    : [esc(`${fmtSaleDate(new Date(ser.from).toISOString())} – ${fmtSaleDate(new Date(ser.to).toISOString())}`)];
   if (ser.sampled) notes.push(esc(t('trade.chart.sampled')
     .replace('{n}', ser.shown.toLocaleString()).replace('{total}', ser.stats.n.toLocaleString())));
-  else if (ser.detail) notes.push(esc(t('trade.chart.clickHint')));
+  else if (ser.detail) notes.push(esc(t(coll === 'land' ? 'trade.chart.clickHintLand' : 'trade.chart.clickHint')));
   return notes.join(' · ');
 }
 
@@ -5015,7 +5194,9 @@ function chartNoteHtml() {
 function clearSalesWindow() {
   clearTimeout(salesWindowTimer);
   salesWindowReq++; // any answer still in flight is for a period nobody is looking at now
-  salesWindow = null; salesWindowStats = null; salesWindowBusy = false;
+  salesWindow = null; salesWindowStats = null; salesWindowBusy = false; salesZoom = null;
+  // A move toward a period nobody is asking for any more.
+  clearTimeout(chartCameraTimer); cancelAnimationFrame(chartFlyRaf); chartCamera = null;
 }
 
 /**
@@ -5056,50 +5237,81 @@ async function fetchWindowStats(win, rid) {
     const data = await res.json();
     if (rid !== salesWindowReq) return;
     salesWindowStats = data.stats || { n: 0 };
+    salesZoom = data.series || null;
   } catch (err) {
     if (rid !== salesWindowReq) return;
     console.error('Sales window stats failed:', err);
-    salesWindowStats = null; // the rail says so by going back to the full-range figures
+    // The rail says so by going back to the full-range figures, and the scatter keeps the
+    // thin sample it had rather than emptying out.
+    salesWindowStats = null; salesZoom = null;
   } finally {
-    if (rid === salesWindowReq) { salesWindowBusy = false; patchChartStats(); }
+    if (rid === salesWindowReq) { salesWindowBusy = false; patchChartStats(); patchChartDrawn(); }
   }
 }
 
-function setSalesWindow(win) {
+/** @returns true when the drawing is going to change, so a caller can wait for it. */
+function setSalesWindow(win, opts = {}) {
   const same = win && salesWindow && win.from === salesWindow.from && win.to === salesWindow.to;
-  if (same || (!win && !salesWindow)) return;
+  if (same || (!win && !salesWindow)) return false;
   clearTimeout(salesWindowTimer);
   const rid = ++salesWindowReq;
   salesWindow = win;
-  if (!win) { salesWindowStats = null; salesWindowBusy = false; patchChartStats(); return; }
+  if (!win) {
+    salesWindowStats = null; salesWindowBusy = false; salesZoom = null;
+    patchChartStats(); patchChartDrawn(); return true;
+  }
+  // Every point is already here, so the scatter in the window is the real thing and needs
+  // no help. Only a sampled set has to ask, which is the same set localWindowStats declines.
   const local = localWindowStats(win);
-  if (local) { salesWindowStats = local; salesWindowBusy = false; patchChartStats(); return; }
+  // The dots are already right, but the price axis isn't: it's still scaled to the whole
+  // run. patchChartDrawn re-fits it, and finds no new points to swap, so nothing moves.
+  if (local) {
+    salesWindowStats = local; salesWindowBusy = false;
+    patchChartStats(); patchChartDrawn(); return true;
+  }
   // Held back a beat: a wheel zoom fires this every notch, and each one would otherwise be
   // a request for a window the member has already scrolled past.
   salesWindowBusy = true;
   patchChartStats();
-  salesWindowTimer = setTimeout(() => fetchWindowStats(win, rid), 260);
+  salesWindowTimer = setTimeout(() => fetchWindowStats(win, rid), opts.now ? 0 : 260);
+  return true;
 }
 
 // The chart moved. Work out whether that's a period or just the whole range again.
-function onChartViewChanged() {
-  syncChartResetBtn();
+function onChartViewChanged(opts = {}) {
+  syncChartRange();
   const x = salesChart?.scales?.x;
   const full = salesSeries ? chartXBounds(salesSeries) : null;
   if (!x || !full) return;
   const whole = Math.abs(x.min - full.min) <= 1 && Math.abs(x.max - full.max) <= 1;
-  setSalesWindow(whole ? null : { from: Math.round(x.min), to: Math.round(x.max) });
+  // Clipped to the sales themselves: the axis carries empty margin at both ends, and a
+  // period line reading "up to 12 October" when the last sale was 5 September is a lie
+  // about the data, however harmless it is to the arithmetic.
+  setSalesWindow(whole ? null : {
+    from: Math.max(Math.round(x.min), salesSeries.from),
+    to: Math.min(Math.round(x.max), salesSeries.to),
+  }, opts);
 }
 
 // Says which period the figures above it describe. Absent when they describe everything —
-// the note under the chart already gives the full span.
+// the note under the chart already gives the full span. No way out of the zoom here: the
+// All time button sits directly underneath it.
 function chartWindowHtml() {
   if (!salesWindow || !salesWindowStats) return '';
   const label = t('trade.chart.window')
     .replace('{from}', fmtSaleDate(new Date(salesWindow.from).toISOString()))
     .replace('{to}', fmtSaleDate(new Date(salesWindow.to).toISOString()));
-  return `<p class="trade-chart-window" role="status">${esc(label)}
-    <button type="button" class="trade-chart-window-all" data-act="chart-reset">${esc(t('trade.chart.windowAll'))}</button></p>`;
+  return `<p class="trade-chart-window" role="status">${esc(label)}</p>`;
+}
+
+/* Redraw for a period that has just arrived (or just been left). Deliberately NOT
+   patchSalesChart: that rebuilds the range buttons, and pulling the focus ring out from
+   under the button the member just pressed is its own small betrayal. */
+function patchChartDrawn() {
+  const nt = root()?.querySelector('#trade-chart-note');
+  if (nt) nt.innerHTML = chartNoteHtml();
+  renderSalesChart();
+  flyChartCamera(); // everything is final now, so the one move that was waiting can go
 }
 
 function patchChartStats() {
@@ -5136,15 +5348,13 @@ function salesChartHtml() {
     <div class="trade-chart-head">
       <div class="trade-chart-titles">
         <span class="trade-chart-eyebrow">${ico('chart', 13)}${esc(t('trade.chart.eyebrow'))}</span>
-        <p class="trade-chart-lead">${esc(t(fltActive() ? 'trade.chart.leadFiltered' : 'trade.chart.lead'))}</p>
+        <p class="trade-chart-lead">${esc(t(chartLeadKey()))}</p>
       </div>
-      <div class="trade-chart-actions">
-        ${chartScaleToggleHtml()}
-        <button type="button" class="trade-chart-toggle is-reset" data-act="chart-reset" hidden>${esc(t('trade.chart.reset'))}</button>
-      </div>
+      <div class="trade-chart-actions">${chartScaleToggleHtml()}</div>
     </div>
     <div class="trade-chart-stats" id="trade-chart-stats">${chartStatsHtml()}</div>
     <div id="trade-chart-window">${chartWindowHtml()}</div>
+    ${chartRangeHtml()}
     <div class="trade-chart-box">
       <canvas id="trade-sales-canvas" role="img" aria-label="${esc(summary)}"></canvas>
     </div>
@@ -5155,7 +5365,7 @@ function salesChartHtml() {
 // Datasets for the current series + display currency: the dots (one per sale) and the trend
 // line through the server's buckets.
 function chartDatasets() {
-  const ser = salesSeries;
+  const ser = drawnSeries();
   const dots = ser.points
     .map(p => ({ x: p.t, y: chartValue(p.e, p.u), id: p.id || null, label: p.n || null }))
     .filter(p => p.y != null && p.y > 0);
@@ -5177,7 +5387,21 @@ function chartDatasets() {
   ];
 }
 
+// The price axis for whatever is drawn now. Split out because a camera move has to set it
+// in the SAME update as the timeline — applied on its own it becomes a second, separate
+// lurch a moment after the first.
+function applyChartYAxis() {
+  const y = salesChart?.options?.scales?.y;
+  if (!y) return;
+  y.type = salesScaleMode() === 'log' ? 'logarithmic' : 'linear';
+  // Cleared before they're rewritten: a linear window's bounds mean nothing on a log axis,
+  // and left behind they would pin it to the last period the member looked at.
+  y.min = y.max = undefined;
+  Object.assign(y, chartYBounds());
+}
+
 function destroySalesChart() {
+  cancelAnimationFrame(chartFlyRaf); // a camera still in flight toward a chart being torn down
   if (salesChart) { try { salesChart.destroy(); } catch { /* already torn down */ } salesChart = null; }
 }
 
@@ -5186,17 +5410,21 @@ function destroySalesChart() {
 // filter change is the chart's own version of the flash this view is trying to avoid.
 function renderSalesChart() {
   const cv = root()?.querySelector('#trade-sales-canvas');
-  if (!cv || typeof Chart === 'undefined' || !salesSeries?.points?.length) { destroySalesChart(); return; }
+  if (!cv || typeof Chart === 'undefined' || !drawnSeries()?.points?.length) { destroySalesChart(); return; }
   const datasets = chartDatasets();
   if (salesChart && salesChart.canvas === cv) {
     // Redrawing for a new currency or a flipped y axis must leave the timeline alone —
     // resetting the x bounds every time would throw away the period the member zoomed to.
-    const newSeries = salesChart.$hccSeries !== salesSeries;
+    const newSeries = salesChart.$hccSeries !== salesSeries;   // a filter changed the data
+    const newDrawn  = salesChart.$hccDrawn !== drawnSeries();  // a zoom swapped the detail
     salesChart.data.datasets[0].data = datasets[0].data;
     salesChart.data.datasets[0].pointRadius = datasets[0].pointRadius;
     salesChart.data.datasets[1].data = datasets[1].data;
     salesChart.data.datasets[1].label = datasets[1].label;
-    salesChart.options.scales.y.type = salesScaleMode() === 'log' ? 'logarithmic' : 'linear';
+    // The price axis belongs with the points, not with the camera: both describe WHICH sales
+    // are on screen, so they change together in one frame. Held back for the camera instead,
+    // the full run's dots landed for a moment on the last window's price scale.
+    applyChartYAxis();
     if (newSeries) {
       // New data means a new full range, so the window resets to it. Writing the bounds IS
       // the reset — resetZoom() would put back the range the plugin cached at build time,
@@ -5205,12 +5433,17 @@ function renderSalesChart() {
       Object.assign(salesChart.options.scales.x, chartXBounds(salesSeries));
       salesChart.$hccSeries = salesSeries;
     }
-    salesChart.update();
-    syncChartResetBtn(); // the axis only settles on its new bounds once the update has run
+    salesChart.$hccDrawn = drawnSeries();
+    // A zoom hands over a different set of points for the same picture, and Chart.js tweens
+    // between sets by pairing them off by index — so dot 1 of the window would set out from
+    // wherever dot 1 of the whole run happened to be, which is nowhere near it. The dots
+    // simply appear where they belong; the camera does the moving. A filter change keeps
+    // its animation: there the chart really is becoming a different chart.
+    salesChart.update(newDrawn && !newSeries ? 'none' : undefined);
+    syncChartRange(); // the axis only settles on its new bounds once the update has run
     return;
   }
   destroySalesChart();
-  const spanDays = chartSpanDays(salesSeries);
   salesChart = new Chart(cv, {
     data: { datasets },
     options: {
@@ -5265,44 +5498,46 @@ function renderSalesChart() {
           ticks: {
             font: { family: CHART_FONT, size: chartNarrow() ? 10.5 : 10, weight: '700' },
             color: '#7D7C88', maxTicksLimit: chartNarrow() ? 4 : 7, maxRotation: 0, autoSkip: true,
-            callback: v => fmtChartTick(v, spanDays),
+            // The span comes off the axis, not the series: zoomed into a week, the labels
+            // have to say which days those are instead of repeating one month four times.
+            callback(v) { return fmtChartTick(v, Math.max(1, (this.max - this.min) / 86400000)); },
           },
         },
         y: {
           type: salesScaleMode() === 'log' ? 'logarithmic' : 'linear',
+          ...chartYBounds(),
           grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false },
           ticks: {
             font: { family: CHART_FONT, size: 10, weight: '700' }, color: '#7D7C88',
             maxTicksLimit: 6, callback: fmtChartAxis,
+            // Label the round prices, not the ends of the axis. Pinning the axis to the
+            // sales in view leaves its edges on whatever the padding worked out to, and
+            // "US$ 59,20" at the foot of the scale is a number, not a price.
+            includeBounds: false,
           },
         },
       },
     },
   });
   salesChart.$hccSeries = salesSeries;
-  syncChartResetBtn();
+  salesChart.$hccDrawn = drawnSeries();
+  syncChartRange();
 }
 
-// The Reset pill shows when the window on screen isn't the whole range — read off the axis
-// itself rather than tracked as a flag. The plugin can't answer this for us either way: its
-// zoom level compares against the axis the chart was BUILT with, so a filter that shortens
-// the timeline reads as a zoom nobody performed, and its own reset fires the zoom callback.
-function syncChartResetBtn() {
-  const btn = root()?.querySelector('[data-act="chart-reset"]');
-  if (!btn) return;
-  const x = salesChart?.scales?.x;
-  const full = salesSeries ? chartXBounds(salesSeries) : null;
-  btn.hidden = !(x && full && (Math.abs(x.min - full.min) > 1 || Math.abs(x.max - full.max) > 1));
+// Which range button reads as pressed — taken off the axis itself rather than tracked as a
+// flag, so a button, a wheel and a drag all land in the same place. The plugin can't answer
+// this for us: its zoom level compares against the axis the chart was BUILT with, so a
+// filter that shortens the timeline reads as a zoom nobody performed. Only the pressed
+// states move here; which buttons are on offer changes with the data, in patchSalesChart.
+function syncChartRange(pending = null) {
+  const bar = root()?.querySelector('#trade-chart-ranges');
+  if (!bar) return;
+  // `pending` is a press whose camera move hasn't started yet. Reading the axis then would
+  // light the button the member is leaving, which makes the press look like it missed.
+  const active = pending != null ? pending : activeChartRange();
+  for (const btn of bar.querySelectorAll('[data-act="chart-range"]'))
+    btn.setAttribute('aria-pressed', String(Number(btn.dataset.d) === active));
 }
-function resetChartZoom() {
-  clearSalesWindow();
-  salesChart?.resetZoom?.();
-  // The plugin caches the bounds it first saw and pins panning to them; a filter can move
-  // those bounds by years, so let it re-read rather than trapping the view in an old window.
-  if (salesChart?.$zoom) salesChart.$zoom._originalScaleLimits = null;
-  syncChartResetBtn();
-}
-
 // Repaint the card for new data (or a new currency/scale). Patches the numbers in place when
 // the card is already up, rebuilds it when it isn't.
 function patchSalesChart() {
@@ -5315,8 +5550,10 @@ function patchSalesChart() {
     patchChartStats();
     const nt = live.querySelector('#trade-chart-note');  if (nt) nt.innerHTML = chartNoteHtml();
     const sc = live.querySelector('[data-act="chart-scale"]'); if (sc) sc.outerHTML = chartScaleToggleHtml();
+    // A new filter is a new span, so a different set of periods is worth offering.
+    const rg = live.querySelector('#trade-chart-ranges'); if (rg) rg.outerHTML = chartRangeHtml();
     const ld = live.querySelector('.trade-chart-lead');
-    if (ld) ld.textContent = t(fltActive() ? 'trade.chart.leadFiltered' : 'trade.chart.lead');
+    if (ld) ld.textContent = t(chartLeadKey());
   } else {
     destroySalesChart();
     slot.innerHTML = salesChartHtml();
@@ -8022,9 +8259,8 @@ function onClick(e) {
       // Cycle the pin: whichever mode is showing, the tap asks for the other one.
       salesScale = salesScaleMode() === 'log' ? 'linear' : 'log';
       return patchSalesChart();
-    case 'chart-reset':
-      resetChartZoom();
-      return patchChartStats();
+    case 'chart-range':
+      return applyChartRange(Number(target.dataset.d) || 0);
     case 'flt-drawer':
       return setFltSheet(!fltOpenMobile);
     // --- Inventory filter (Sell/Transfer pickers) ---

@@ -5912,12 +5912,27 @@ body.trade-sheet-open { overflow: hidden; }
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 12px;
   font-family: var(--hr-sans); font-weight: 800; font-size: 11.5px; color: var(--hr-secondary);
 }
-.trade-chart-window-all {
-  font: inherit; color: var(--hr-fg-3); background: none; border: 0; padding: 0;
-  text-decoration: underline; cursor: pointer;
+/* Quick jumps down the timeline, sitting on the axis they move. Lavender, not mint, because
+   these drive the same thing the trend line and the period line above them do; the scale
+   toggle is a different kind of switch and keeps the primary colour. Scrolls sideways on a
+   phone rather than wrapping under the chart. */
+.trade-chart-ranges {
+  display: flex; gap: 6px; margin: 0 0 10px; padding-bottom: 2px;
+  overflow-x: auto; scrollbar-width: none;
 }
-.trade-chart-window-all:hover { color: var(--hr-fg-0); }
-.trade-chart-window-all:focus-visible { outline: 2px solid var(--hr-primary); outline-offset: 2px; border-radius: 4px; }
+.trade-chart-ranges::-webkit-scrollbar { display: none; }
+.trade-chart-range {
+  flex: 0 0 auto; font-family: var(--hr-sans); font-weight: 800; font-size: 11px;
+  color: var(--hr-fg-3); background: rgba(255,255,255,.04);
+  border: 1px solid var(--hr-line); border-radius: var(--hr-radius-pill);
+  padding: 5px 11px; cursor: pointer; white-space: nowrap;
+  transition: border-color .2s, color .2s, background .2s;
+}
+.trade-chart-range:hover { border-color: var(--hr-line-strong); color: var(--hr-fg-0); }
+.trade-chart-range:focus-visible { outline: 2px solid var(--hr-primary); outline-offset: 2px; }
+.trade-chart-range[aria-pressed="true"] {
+  color: var(--hr-secondary); border-color: rgba(133,97,255,.45); background: rgba(133,97,255,.12);
+}
 /* Waiting on the figures for a freshly-zoomed period — dim them rather than blanking the
    rail, so the tiles don't jump. */
 .trade-chart-stats.is-stale { opacity: .45; transition: opacity .15s ease; }
@@ -5930,7 +5945,11 @@ body.trade-sheet-open { overflow: hidden; }
   .trade-chart-stat { min-width: 88px; padding: 8px 10px; }
   .trade-chart-stat-v { font-size: 13px; }
 }
-@media (prefers-reduced-motion: reduce) { .trade-chart-card { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .trade-chart-card { animation: none; }
+  .trade-chart-range, .trade-chart-toggle { transition: none; }
+  .trade-chart-stats.is-stale { transition: none; }
+}
 
 /* A feed reloading under a changed filter dims in place. The rows are still the last true
    answer, so tearing them down (and collapsing the page height under the scroll position)
